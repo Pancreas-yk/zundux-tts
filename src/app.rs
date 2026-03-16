@@ -6,7 +6,16 @@ use crate::ui::Screen;
 
 use std::process::{Child, Command};
 use std::sync::mpsc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
+
+struct PlaybackGuard(Arc<AtomicBool>);
+impl Drop for PlaybackGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
 
 /// Messages from the tokio runtime back to the UI thread
 enum UiMessage {
@@ -31,6 +40,7 @@ pub struct AppState {
     pub voicevox_connected: bool,
     pub device_ready: bool,
     pub is_synthesizing: bool,
+    pub is_playing: bool,
     pub last_error: Option<String>,
     pub pending_send: Option<String>,
     pub pending_health_check: bool,
@@ -52,6 +62,7 @@ pub struct ZundamonApp {
     voicevox_process: Option<Child>,
     is_docker: bool,
     last_health_check: Instant,
+    pub is_playing: Arc<AtomicBool>,
 }
 
 const HEALTH_CHECK_INTERVAL_SECS: u64 = 5;
@@ -87,6 +98,7 @@ impl ZundamonApp {
                 voicevox_connected: false,
                 device_ready,
                 is_synthesizing: false,
+                is_playing: false,
                 last_error: None,
                 pending_send: None,
                 pending_health_check: false,
@@ -103,6 +115,7 @@ impl ZundamonApp {
             voicevox_process: None,
             is_docker: false,
             last_health_check: Instant::now(),
+            is_playing: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -152,14 +165,20 @@ impl ZundamonApp {
                 UiMessage::WavReady(wav) => {
                     self.state.is_synthesizing = false;
                     self.state.last_error = None;
-                    let device_name = self.state.config.virtual_device_name.clone();
-                    let monitor = self.state.config.monitor_audio;
-                    std::thread::spawn(move || {
-                        if let Err(e) = crate::audio::playback::play_wav(wav, &device_name, monitor)
-                        {
-                            tracing::error!("Playback error: {}", e);
-                        }
-                    });
+                    if self.is_playing.load(Ordering::SeqCst) {
+                        tracing::warn!("Playback already in progress, dropping TTS audio");
+                    } else {
+                        let device_name = self.state.config.virtual_device_name.clone();
+                        let monitor = self.state.config.monitor_audio;
+                        let playing = self.is_playing.clone();
+                        playing.store(true, Ordering::SeqCst);
+                        std::thread::spawn(move || {
+                            let _guard = PlaybackGuard(playing);
+                            if let Err(e) = crate::audio::playback::play_wav(wav, &device_name, monitor) {
+                                tracing::error!("Playback error: {}", e);
+                            }
+                        });
+                    }
                 }
                 UiMessage::SpeakersLoaded(speakers) => {
                     self.state.speakers = speakers;
@@ -340,22 +359,23 @@ impl Drop for ZundamonApp {
 impl eframe::App for ZundamonApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_messages();
+        self.state.is_playing = self.is_playing.load(Ordering::SeqCst);
         self.periodic_health_check();
         self.process_actions();
 
         egui::TopBottomPanel::top("tabs").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.state.current_screen, Screen::Input, "入力");
-                ui.selectable_value(
-                    &mut self.state.current_screen,
-                    Screen::Settings,
-                    "設定",
-                );
+                ui.selectable_value(&mut self.state.current_screen, Screen::Soundboard, "サウンドボード");
+                ui.selectable_value(&mut self.state.current_screen, Screen::Media, "メディア");
+                ui.selectable_value(&mut self.state.current_screen, Screen::Settings, "設定");
             });
         });
 
         egui::CentralPanel::default().show(ctx, |ui| match self.state.current_screen {
             Screen::Input => crate::ui::input::show(ui, &mut self.state),
+            Screen::Soundboard => crate::ui::soundboard::show(ui, &mut self.state),
+            Screen::Media => crate::ui::media::show(ui, &mut self.state),
             Screen::Settings => crate::ui::settings::show(ui, &mut self.state),
         });
 
