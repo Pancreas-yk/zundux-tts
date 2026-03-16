@@ -1,6 +1,7 @@
 mod app;
 mod audio;
 mod config;
+mod media;
 mod osc;
 mod tts;
 mod ui;

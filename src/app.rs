@@ -65,6 +65,13 @@ pub struct AppState {
     pub soundboard_files: Vec<(String, std::path::PathBuf)>,
     pub pending_soundboard_scan: bool,
     pub pending_soundboard_play: Option<std::path::PathBuf>,
+    pub media_url: String,
+    pub media_playing: bool,
+    pub pending_media_play: Option<String>,
+    pub pending_media_stop: bool,
+    pub media_deps_checked: bool,
+    pub media_has_ytdlp: bool,
+    pub media_has_ffmpeg: bool,
 }
 
 const DOCKER_CONTAINER_NAME: &str = "zundamon-voicevox";
@@ -78,6 +85,7 @@ pub struct ZundamonApp {
     is_docker: bool,
     last_health_check: Instant,
     pub is_playing: Arc<AtomicBool>,
+    url_player: crate::media::url_player::UrlPlayer,
 }
 
 const HEALTH_CHECK_INTERVAL_SECS: u64 = 5;
@@ -133,6 +141,13 @@ impl ZundamonApp {
                 soundboard_files: Vec::new(),
                 pending_soundboard_scan: true,
                 pending_soundboard_play: None,
+                media_url: String::new(),
+                media_playing: false,
+                pending_media_play: None,
+                pending_media_stop: false,
+                media_deps_checked: false,
+                media_has_ytdlp: false,
+                media_has_ffmpeg: false,
             },
             audio_manager,
             ui_rx,
@@ -141,6 +156,7 @@ impl ZundamonApp {
             is_docker: false,
             last_health_check: Instant::now(),
             is_playing: Arc::new(AtomicBool::new(false)),
+            url_player: crate::media::url_player::UrlPlayer::new(),
         }
     }
 
@@ -397,6 +413,46 @@ impl ZundamonApp {
                     }
                 });
             }
+        }
+
+        // Check media dependencies
+        if !self.state.media_deps_checked {
+            self.state.media_deps_checked = true;
+            let (ytdlp, ffmpeg) = crate::media::url_player::UrlPlayer::check_dependencies();
+            self.state.media_has_ytdlp = ytdlp;
+            self.state.media_has_ffmpeg = ffmpeg;
+        }
+
+        // Poll media process for natural completion
+        if self.state.media_playing && self.url_player.poll_finished() {
+            self.state.media_playing = false;
+            self.is_playing.store(false, Ordering::SeqCst);
+        }
+
+        // Media URL playback
+        if let Some(url) = self.state.pending_media_play.take() {
+            if self.is_playing.load(Ordering::SeqCst) {
+                self.state.last_error = Some("再生中です...".to_string());
+            } else {
+                let device_name = &self.state.config.virtual_device_name;
+                match self.url_player.play(&url, device_name) {
+                    Ok(()) => {
+                        self.state.media_playing = true;
+                        self.is_playing.store(true, Ordering::SeqCst);
+                        self.state.last_error = None;
+                    }
+                    Err(e) => {
+                        self.state.last_error = Some(format!("メディア再生失敗: {}", e));
+                    }
+                }
+            }
+        }
+
+        if self.state.pending_media_stop {
+            self.state.pending_media_stop = false;
+            self.url_player.stop();
+            self.state.media_playing = false;
+            self.is_playing.store(false, Ordering::SeqCst);
         }
     }
 
