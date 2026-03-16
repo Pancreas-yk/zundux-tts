@@ -579,6 +579,8 @@ impl ZundamonApp {
 
 impl Drop for ZundamonApp {
     fn drop(&mut self) {
+        self.url_player.stop();
+        self.desktop_capture.stop_capture();
         if self.is_docker {
             Self::stop_docker_container();
         }

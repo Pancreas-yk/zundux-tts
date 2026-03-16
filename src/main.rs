@@ -65,8 +65,8 @@ fn main() -> eframe::Result<()> {
     let handle = rt.handle().clone();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([480.0, 600.0])
-            .with_min_inner_size([360.0, 400.0]),
+            .with_inner_size([560.0, 700.0])
+            .with_min_inner_size([400.0, 500.0]),
         ..Default::default()
     };
 
