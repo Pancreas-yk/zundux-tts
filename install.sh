@@ -17,11 +17,64 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_BIN="$HOME/.local/bin"
 INSTALL_APPS="$HOME/.local/share/applications"
 CONFIG_DIR="$HOME/.config/zundamon_vrc"
+GITHUB_REPO="ediblepancreas/zundamon_vrc"
+
+download_binary() {
+    info "最新リリースをダウンロード中..."
+
+    local api_url="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
+    local release_json
+    release_json=$(curl -fsSL "$api_url") || {
+        error "リリース情報の取得に失敗しました"
+        return 1
+    }
+
+    local binary_url
+    binary_url=$(echo "$release_json" | grep -o '"browser_download_url":[[:space:]]*"[^"]*zundamon_vrc-linux-x86_64"' | grep -o 'https://[^"]*')
+
+    # Validate URL pattern
+    if ! echo "$binary_url" | grep -qE "^https://github\.com/${GITHUB_REPO}/releases/download/v[0-9]+\.[0-9]+\.[0-9]+/zundamon_vrc-linux-x86_64$"; then
+        error "ダウンロードURLが不正です: $binary_url"
+        return 1
+    fi
+
+    local checksum_url
+    checksum_url=$(echo "$release_json" | grep -o '"browser_download_url":[[:space:]]*"[^"]*SHA256SUMS"' | grep -o 'https://[^"]*')
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    trap "rm -rf '$tmpdir'" EXIT
+
+    curl -fsSL "$binary_url" -o "$tmpdir/zundamon_vrc-linux-x86_64" || {
+        error "バイナリのダウンロードに失敗しました"
+        return 1
+    }
+
+    curl -fsSL "$checksum_url" -o "$tmpdir/SHA256SUMS" || {
+        error "チェックサムのダウンロードに失敗しました"
+        return 1
+    }
+
+    cd "$tmpdir"
+    if ! sha256sum -c SHA256SUMS; then
+        error "チェックサム検証に失敗しました。ダウンロードが破損している可能性があります"
+        return 1
+    fi
+    cd "$SCRIPT_DIR"
+
+    cp "$tmpdir/zundamon_vrc-linux-x86_64" "$INSTALL_BIN/zundamon_vrc"
+    chmod +x "$INSTALL_BIN/zundamon_vrc"
+    info "バイナリをインストール: $INSTALL_BIN/zundamon_vrc"
+}
 
 # ---------- Step 1: 依存パッケージのインストール ----------
 info "依存パッケージを確認中..."
 
-PACKAGES=(base-devel rust docker pulseaudio noto-fonts-cjk yt-dlp ffmpeg)
+if [ "${1:-}" = "--from-source" ]; then
+    PACKAGES=(base-devel rust docker pulseaudio noto-fonts-cjk yt-dlp ffmpeg)
+else
+    PACKAGES=(docker pulseaudio noto-fonts-cjk yt-dlp ffmpeg)
+fi
 MISSING=()
 
 for pkg in "${PACKAGES[@]}"; do
@@ -106,21 +159,24 @@ else
     docker pull "$VOICEVOX_IMAGE"
 fi
 
-# ---------- Step 4: ビルド ----------
-info "アプリケーションをビルド中..."
-cd "$SCRIPT_DIR"
-cargo build --release
-
-# ---------- Step 5: インストール ----------
-info "インストール中..."
-
+# ---------- Step 4: ビルド or ダウンロード ----------
 mkdir -p "$INSTALL_BIN"
 mkdir -p "$INSTALL_APPS"
 mkdir -p "$CONFIG_DIR"
 
-# Copy binary
-cp "$SCRIPT_DIR/target/release/zundamon_vrc" "$INSTALL_BIN/zundamon_vrc"
-info "バイナリをインストール: $INSTALL_BIN/zundamon_vrc"
+if [ "${1:-}" = "--from-source" ]; then
+    info "ソースからビルド中..."
+    if ! command -v cargo &>/dev/null; then
+        error "Rustツールチェーンが必要です: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+        exit 1
+    fi
+    cd "$SCRIPT_DIR"
+    cargo build --release
+    cp "$SCRIPT_DIR/target/release/zundamon_vrc" "$INSTALL_BIN/zundamon_vrc"
+    info "バイナリをインストール: $INSTALL_BIN/zundamon_vrc"
+else
+    download_binary
+fi
 
 # Build docker run command
 DOCKER_CMD="docker run --rm ${GPU_FLAGS:+$GPU_FLAGS }-p 50021:50021 $VOICEVOX_IMAGE"
@@ -131,11 +187,9 @@ cat > "$INSTALL_BIN/zundamon_vrc_launch.sh" << 'LAUNCHER_EOF'
 VOICEVOX_CONTAINER="zundamon-voicevox"
 LAUNCHER_EOF
 
-# Append image and GPU flags (with variable expansion)
-cat >> "$INSTALL_BIN/zundamon_vrc_launch.sh" << LAUNCHER_DYNAMIC_EOF
-VOICEVOX_IMAGE="$VOICEVOX_IMAGE"
-GPU_FLAGS="$GPU_FLAGS"
-LAUNCHER_DYNAMIC_EOF
+# Append image and GPU flags safely
+printf 'VOICEVOX_IMAGE=%q\n' "$VOICEVOX_IMAGE" >> "$INSTALL_BIN/zundamon_vrc_launch.sh"
+printf 'GPU_FLAGS=%q\n' "$GPU_FLAGS" >> "$INSTALL_BIN/zundamon_vrc_launch.sh"
 
 cat >> "$INSTALL_BIN/zundamon_vrc_launch.sh" << 'LAUNCHER_EOF'
 
@@ -177,15 +231,17 @@ if [ -f "$CONFIG_DIR/config.toml" ]; then
     else
         echo "voicevox_path = \"$DOCKER_CMD\"" >> "$CONFIG_DIR/config.toml"
     fi
-    # Don't auto-launch from app since launch.sh handles it
+    # Set auto_launch_voicevox = true
     if grep -q 'auto_launch_voicevox' "$CONFIG_DIR/config.toml"; then
-        sed -i 's|^auto_launch_voicevox.*|auto_launch_voicevox = false|' "$CONFIG_DIR/config.toml"
+        sed -i 's|^auto_launch_voicevox.*|auto_launch_voicevox = true|' "$CONFIG_DIR/config.toml"
+    else
+        echo "auto_launch_voicevox = true" >> "$CONFIG_DIR/config.toml"
     fi
 else
     # Create minimal config
     cat > "$CONFIG_DIR/config.toml" << CONFIG_EOF
 voicevox_path = "$DOCKER_CMD"
-auto_launch_voicevox = false
+auto_launch_voicevox = true
 CONFIG_EOF
 fi
 
