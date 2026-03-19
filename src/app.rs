@@ -526,6 +526,20 @@ impl ZundamonApp {
         }
     }
 
+    fn is_voicevox_docker_running() -> bool {
+        std::process::Command::new("docker")
+            .args([
+                "ps",
+                "--filter",
+                "name=zundamon-voicevox",
+                "--format",
+                "{{.Names}}",
+            ])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("zundamon-voicevox"))
+            .unwrap_or(false)
+    }
+
     fn is_docker_command(cmd: &str) -> bool {
         let trimmed = cmd.trim_start();
         trimmed.starts_with("docker ") || trimmed.starts_with("docker run")
@@ -548,9 +562,29 @@ impl ZundamonApp {
     }
 
     fn launch_voicevox(&mut self) {
+        // Duplicate guard — check if process we spawned is still alive
+        if let Some(ref mut proc) = self.voicevox_process {
+            match proc.try_wait() {
+                Ok(None) => {
+                    tracing::info!("VOICEVOX process already running");
+                    return;
+                }
+                _ => {
+                    self.voicevox_process = None;
+                }
+            }
+        }
+
         let path = self.state.config.voicevox_path.trim().to_string();
         if path.is_empty() {
             tracing::warn!("voicevox_path is empty, cannot launch");
+            return;
+        }
+
+        // Check if Docker container exists from a previous session
+        if Self::is_docker_command(&path) && Self::is_voicevox_docker_running() {
+            tracing::info!("VOICEVOX Docker container already running");
+            self.state.voicevox_launching = true;
             return;
         }
 
@@ -655,11 +689,24 @@ impl Drop for ZundamonApp {
         self.url_player.stop();
         self.desktop_capture.stop_capture();
         if self.is_docker {
-            Self::stop_docker_container();
+            // Graceful: try stop first (sends SIGTERM to container)
+            let _ = std::process::Command::new("docker")
+                .args(["stop", "-t", "5", DOCKER_CONTAINER_NAME])
+                .status();
         }
         if let Some(ref mut child) = self.voicevox_process {
-            let _ = child.kill();
-            let _ = child.wait();
+            // Try graceful SIGTERM first, then force kill after 5 seconds
+            let _ = std::process::Command::new("kill")
+                .args(["-TERM", &child.id().to_string()])
+                .status();
+            match child.try_wait() {
+                Ok(Some(_)) => {}
+                _ => {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
         }
     }
 }

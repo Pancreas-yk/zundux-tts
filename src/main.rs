@@ -50,6 +50,18 @@ fn setup_japanese_fonts(ctx: &egui::Context) {
 fn main() -> eframe::Result<()> {
     tracing_subscriber::fmt::init();
 
+    // Register cleanup handler for SIGTERM/SIGINT
+    let cleanup_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag_clone = cleanup_flag.clone();
+    ctrlc::set_handler(move || {
+        flag_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+        // Cleanup Docker container
+        let _ = std::process::Command::new("docker")
+            .args(["stop", "zundamon-voicevox"])
+            .output();
+    })
+    .expect("Failed to set SIGTERM handler");
+
     let config = AppConfig::load().unwrap_or_else(|e| {
         tracing::warn!("Failed to load config, using defaults: {}", e);
         AppConfig::default()
