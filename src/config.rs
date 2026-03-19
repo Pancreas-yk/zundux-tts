@@ -11,6 +11,7 @@ pub struct AppConfig {
     pub voicevox_url: String,
     pub voicevox_path: String,
     pub auto_launch_voicevox: bool,
+    pub auto_start_app: bool,
     pub synth_params: SynthParamsConfig,
     pub speaker_id: u32,
     pub virtual_device_name: String,
@@ -53,6 +54,7 @@ impl Default for AppConfig {
             voicevox_url: validation::DEFAULT_VOICEVOX_URL.to_string(),
             voicevox_path: "voicevox".to_string(),
             auto_launch_voicevox: false,
+            auto_start_app: false,
             synth_params: SynthParamsConfig::default(),
             speaker_id: 3, // ずんだもん (ノーマル)
             monitor_audio: true,
@@ -141,6 +143,54 @@ impl AppConfig {
         let path = Self::config_path()?;
         let content = toml::to_string_pretty(self)?;
         std::fs::write(&path, content)?;
+        Ok(())
+    }
+
+    /// Returns the path to the XDG autostart .desktop file
+    fn autostart_desktop_path() -> Result<PathBuf> {
+        let home = std::env::var("HOME").context("HOME not set")?;
+        Ok(PathBuf::from(home).join(".config/autostart/zundamon_vrc.desktop"))
+    }
+
+    /// Returns the path to the currently running executable
+    fn current_exe_path() -> Result<String> {
+        let exe = std::env::current_exe().context("Failed to get current exe path")?;
+        Ok(exe.to_string_lossy().to_string())
+    }
+
+    /// Check if the autostart .desktop file exists
+    pub fn is_autostart_enabled() -> bool {
+        Self::autostart_desktop_path()
+            .map(|p| p.exists())
+            .unwrap_or(false)
+    }
+
+    /// Install or remove the autostart .desktop entry
+    pub fn set_autostart(enabled: bool) -> Result<()> {
+        let desktop_path = Self::autostart_desktop_path()?;
+
+        if enabled {
+            let exe_path = Self::current_exe_path()?;
+            let autostart_dir = desktop_path.parent().context("No parent dir")?;
+            std::fs::create_dir_all(autostart_dir)?;
+
+            let content = format!(
+                "[Desktop Entry]\n\
+                 Type=Application\n\
+                 Name=Zundamon VRC\n\
+                 Comment=VOICEVOX TTS voice changer for VRChat\n\
+                 Exec={exe_path}\n\
+                 Terminal=false\n\
+                 X-GNOME-Autostart-enabled=true\n"
+            );
+            std::fs::write(&desktop_path, content)
+                .with_context(|| format!("Failed to write {}", desktop_path.display()))?;
+            tracing::info!("Autostart enabled: {}", desktop_path.display());
+        } else if desktop_path.exists() {
+            std::fs::remove_file(&desktop_path)
+                .with_context(|| format!("Failed to remove {}", desktop_path.display()))?;
+            tracing::info!("Autostart disabled: removed {}", desktop_path.display());
+        }
         Ok(())
     }
 }

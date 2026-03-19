@@ -1,10 +1,48 @@
 use crate::app::AppState;
+use crate::config::AppConfig;
 use crate::validation;
 
 pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
     egui::ScrollArea::vertical().show(ui, |ui| {
         ui.heading("設定");
         ui.separator();
+
+        // Startup settings (app + VOICEVOX combined)
+        ui.collapsing("起動設定", |ui| {
+            // App autostart
+            let mut autostart_app = AppConfig::is_autostart_enabled();
+            if ui
+                .checkbox(&mut autostart_app, "システム起動時にアプリを自動起動")
+                .changed()
+            {
+                state.config.auto_start_app = autostart_app;
+                if let Err(e) = AppConfig::set_autostart(autostart_app) {
+                    state.last_error = Some(format!("自動起動設定失敗: {}", e));
+                }
+            }
+            ui.label(
+                egui::RichText::new("  ~/.config/autostart/ にデスクトップエントリを配置します")
+                    .small()
+                    .weak(),
+            );
+
+            ui.add_space(4.0);
+
+            // VOICEVOX auto-launch
+            ui.checkbox(
+                &mut state.config.auto_launch_voicevox,
+                "アプリ起動時にVOICEVOXを自動起動",
+            );
+            ui.label(
+                egui::RichText::new(
+                    "  両方有効にすると、PC起動→アプリ→VOICEVOX が全自動になります",
+                )
+                .small()
+                .weak(),
+            );
+        });
+
+        ui.add_space(8.0);
 
         // VOICEVOX connection
         ui.collapsing("VOICEVOX接続", |ui| {
@@ -31,11 +69,6 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                 }
             });
             ui.add_space(4.0);
-            ui.checkbox(
-                &mut state.config.auto_launch_voicevox,
-                "アプリ起動時にVOICEVOXを自動起動",
-            );
-            ui.add_space(4.0);
             ui.horizontal(|ui| {
                 if ui.button("接続テスト").clicked() {
                     state.pending_health_check = true;
@@ -47,6 +80,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                     ui.colored_label(
                         state.config.theme.color(state.config.theme.status_ok),
                         "接続OK",
+                    );
+                } else if state.voicevox_launching {
+                    ui.colored_label(
+                        state.config.theme.color(state.config.theme.status_warn),
+                        "起動中...",
                     );
                 } else {
                     ui.colored_label(
