@@ -47,13 +47,13 @@ impl Default for SynthParamsConfig {
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
-            voicevox_url: "http://127.0.0.1:50021".to_string(),
+            voicevox_url: validation::DEFAULT_VOICEVOX_URL.to_string(),
             voicevox_path: "voicevox".to_string(),
             auto_launch_voicevox: false,
             synth_params: SynthParamsConfig::default(),
             speaker_id: 3, // ずんだもん (ノーマル)
             monitor_audio: true,
-            virtual_device_name: "ZundamonVRC".to_string(),
+            virtual_device_name: validation::DEFAULT_DEVICE_NAME.to_string(),
             templates: vec![
                 "こんにちは！".to_string(),
                 "ありがとう！".to_string(),
@@ -106,12 +106,12 @@ impl AppConfig {
                 "Invalid virtual_device_name '{}', using default",
                 self.virtual_device_name
             );
-            self.virtual_device_name = "ZundamonVRC".to_string();
+            self.virtual_device_name = validation::DEFAULT_DEVICE_NAME.to_string();
         }
 
         if let Err(e) = validation::is_valid_voicevox_url(&self.voicevox_url) {
             tracing::warn!("Invalid voicevox_url: {}, using default", e);
-            self.voicevox_url = "http://127.0.0.1:50021".to_string();
+            self.voicevox_url = validation::DEFAULT_VOICEVOX_URL.to_string();
         }
 
         if self.templates.len() > 100 {

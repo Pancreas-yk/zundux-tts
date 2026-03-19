@@ -23,8 +23,9 @@ pub fn sanitize_device_name(name: &str) -> &str {
     }
 }
 
+pub const DEFAULT_VOICEVOX_URL: &str = "http://127.0.0.1:50021";
+
 /// Validate voicevox_url: must be http, host must be localhost/127.0.0.1/[::1].
-#[must_use]
 pub fn is_valid_voicevox_url(url_str: &str) -> Result<()> {
     let parsed = url::Url::parse(url_str).map_err(|e| anyhow::anyhow!("Invalid URL: {}", e))?;
     if parsed.scheme() != "http" {
