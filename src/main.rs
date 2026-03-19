@@ -5,10 +5,11 @@ mod media;
 mod osc;
 mod tts;
 mod ui;
+mod validation;
 
 use config::AppConfig;
-use tts::TtsManager;
 use tts::voicevox::VoicevoxEngine;
+use tts::TtsManager;
 
 fn setup_japanese_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();

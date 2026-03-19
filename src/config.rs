@@ -1,3 +1,4 @@
+use crate::validation;
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
@@ -90,11 +91,42 @@ impl AppConfig {
             config.save()?;
             return Ok(config);
         }
+        validation::check_config_file_size(&path)?;
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("Failed to read config: {}", path.display()))?;
-        let config: Self =
+        let mut config: Self =
             toml::from_str(&content).with_context(|| "Failed to parse config TOML")?;
+        config.validate_and_sanitize();
         Ok(config)
+    }
+
+    fn validate_and_sanitize(&mut self) {
+        if !validation::is_valid_device_name(&self.virtual_device_name) {
+            tracing::warn!(
+                "Invalid virtual_device_name '{}', using default",
+                self.virtual_device_name
+            );
+            self.virtual_device_name = "ZundamonVRC".to_string();
+        }
+
+        if let Err(e) = validation::is_valid_voicevox_url(&self.voicevox_url) {
+            tracing::warn!("Invalid voicevox_url: {}, using default", e);
+            self.voicevox_url = "http://127.0.0.1:50021".to_string();
+        }
+
+        if self.templates.len() > 100 {
+            tracing::warn!(
+                "Too many templates ({}), truncating to 100",
+                self.templates.len()
+            );
+            self.templates.truncate(100);
+        }
+        for t in &mut self.templates {
+            if t.len() > 512 {
+                tracing::warn!("Template too long, truncating to 512 chars");
+                *t = t.chars().take(512).collect();
+            }
+        }
     }
 
     pub fn save(&self) -> Result<()> {
