@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
+use std::time::Duration;
 
 use super::TtsEngine;
 use super::types::{Speaker, SynthParams, UserDict};
@@ -12,8 +13,13 @@ pub struct VoicevoxEngine {
 
 impl VoicevoxEngine {
     pub fn new(base_url: &str) -> Self {
+        let client = Client::builder()
+            .timeout(Duration::from_secs(30))
+            .connect_timeout(Duration::from_secs(5))
+            .build()
+            .unwrap_or_else(|_| Client::new());
         Self {
-            client: Client::new(),
+            client,
             base_url: base_url.trim_end_matches('/').to_string(),
         }
     }

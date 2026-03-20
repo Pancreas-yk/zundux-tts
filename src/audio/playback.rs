@@ -181,12 +181,16 @@ pub fn stop_file_playback(
     cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     cancel.store(true, std::sync::atomic::Ordering::SeqCst);
-    let pid_list = pids.lock().unwrap();
+    let mut pid_list = pids.lock().unwrap();
     for &pid in pid_list.iter() {
+        if pid == 0 {
+            continue;
+        }
         unsafe {
             libc::kill(pid as i32, libc::SIGTERM);
         }
     }
+    pid_list.clear();
 }
 
 fn play_file_default_output(

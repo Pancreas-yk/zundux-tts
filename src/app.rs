@@ -460,9 +460,29 @@ impl ZunduxApp {
             let path = std::path::Path::new(&self.state.config.soundboard_path);
             let mut files = Vec::new();
             if path.is_dir() {
+                let base_canonical = path.canonicalize().ok();
                 if let Ok(entries) = std::fs::read_dir(path) {
                     for entry in entries.flatten() {
                         let p = entry.path();
+                        if std::fs::symlink_metadata(&p)
+                            .map(|m| m.file_type().is_symlink())
+                            .unwrap_or(false)
+                        {
+                            tracing::warn!("Skipping symlink in soundboard path: {}", p.display());
+                            continue;
+                        }
+                        if let Some(base) = &base_canonical {
+                            let Ok(canonical) = p.canonicalize() else {
+                                continue;
+                            };
+                            if !canonical.starts_with(base) {
+                                tracing::warn!(
+                                    "Skipping out-of-directory soundboard file: {}",
+                                    p.display()
+                                );
+                                continue;
+                            }
+                        }
                         if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
                             if matches!(ext.to_lowercase().as_str(), "wav" | "mp3" | "ogg") {
                                 let name = p
@@ -876,8 +896,13 @@ impl ZunduxApp {
             }
         }
 
+        if words.len() != 1 {
+            anyhow::bail!(
+                "Local VOICEVOX launch accepts executable path only (no arguments allowed)"
+            );
+        }
+
         let child = std::process::Command::new(&words[0])
-            .args(&words[1..])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .spawn()
@@ -1100,5 +1125,12 @@ mod tests {
     fn rejects_shell_metacharacters_in_local_cmd() {
         let result = ZunduxApp::launch_local_voicevox("voicevox && rm -rf /");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_local_cmd_with_arguments() {
+        let result = ZunduxApp::launch_local_voicevox("voicevox --host 0.0.0.0");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("no arguments allowed"));
     }
 }

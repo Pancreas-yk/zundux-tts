@@ -85,6 +85,14 @@ impl Default for AppConfig {
 }
 
 impl AppConfig {
+    fn escape_desktop_exec(value: &str) -> String {
+        value
+            .replace('\\', "\\\\")
+            .replace('\n', "\\n")
+            .replace('\r', "\\r")
+            .replace('\t', "\\t")
+    }
+
     fn config_dir() -> Result<PathBuf> {
         let dirs = ProjectDirs::from("", "", "zundux_tts")
             .context("Failed to determine config directory")?;
@@ -176,6 +184,7 @@ impl AppConfig {
 
         if enabled {
             let exe_path = Self::current_exe_path()?;
+            let escaped_exe_path = Self::escape_desktop_exec(&exe_path);
             let autostart_dir = desktop_path.parent().context("No parent dir")?;
             std::fs::create_dir_all(autostart_dir)?;
 
@@ -184,7 +193,7 @@ impl AppConfig {
                  Type=Application\n\
                  Name=ZunduxTTS\n\
                  Comment=VOICEVOX TTS virtual microphone\n\
-                 Exec={exe_path}\n\
+                 Exec={escaped_exe_path}\n\
                  Terminal=false\n\
                  X-GNOME-Autostart-enabled=true\n"
             );
@@ -197,5 +206,16 @@ impl AppConfig {
             tracing::info!("Autostart disabled: removed {}", desktop_path.display());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AppConfig;
+
+    #[test]
+    fn desktop_exec_is_escaped() {
+        let escaped = AppConfig::escape_desktop_exec("a\\b\nc\rd\te");
+        assert_eq!(escaped, "a\\\\b\\nc\\rd\\te");
     }
 }
