@@ -93,6 +93,7 @@ pub struct AppState {
     pub pending_refresh_mic_sources: bool,
     pub color_edit_buffers: std::collections::HashMap<String, String>,
     pub pending_stop_speaking: bool,
+    pub needs_initial_focus: bool,
 }
 
 const DOCKER_CONTAINER_NAME: &str = "zundux-voicevox";
@@ -186,6 +187,7 @@ impl ZunduxApp {
                 pending_refresh_mic_sources: true,
                 color_edit_buffers: std::collections::HashMap::new(),
                 pending_stop_speaking: false,
+                needs_initial_focus: true,
             },
             audio_manager,
             ui_rx,
@@ -999,6 +1001,9 @@ impl eframe::App for ZunduxApp {
                         );
                         if btn.clicked() {
                             self.state.current_screen = screen;
+                            if screen == Screen::Input {
+                                self.state.needs_initial_focus = true;
+                            }
                         }
                     }
                 });

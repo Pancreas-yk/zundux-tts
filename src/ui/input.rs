@@ -61,9 +61,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                 .frame(false),
         );
 
-        // Auto-focus on the text input when the Input screen is active
-        if !response.has_focus() && !response.lost_focus() {
+        // Auto-focus only on the first frame (avoid re-requesting focus every
+        // frame, which resets IME preedit state and breaks Japanese input).
+        if state.needs_initial_focus {
             ui.memory_mut(|mem| mem.request_focus(egui::Id::new("main_text_input")));
+            state.needs_initial_focus = false;
         }
 
         if response.has_focus() {
