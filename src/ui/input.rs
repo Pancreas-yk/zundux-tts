@@ -58,18 +58,35 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                 .desired_rows(3)
                 .desired_width(f32::INFINITY)
                 .hint_text("テキストを入力してEnterで送信 (Shift+Enterで改行)")
-                .frame(false),
+                .frame(false)
+                // Use Shift+Enter for newlines so that plain Enter can be used to
+                // submit text.  This also matches the hint text shown to the user.
+                .return_key(egui::KeyboardShortcut::new(
+                    egui::Modifiers::SHIFT,
+                    egui::Key::Enter,
+                )),
         );
 
-        // Auto-focus on the text input when the Input screen is active
-        if !response.has_focus() && !response.lost_focus() {
+        // Auto-focus on the text input when the Input screen is active.
+        // Skip the request while IME is composing to avoid resetting the
+        // preedit state (egui resets ime_enabled on gained_focus/lost_focus).
+        let ime_active = ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Ime(_))));
+        if !response.has_focus() && !response.lost_focus() && !ime_active {
             ui.memory_mut(|mem| mem.request_focus(egui::Id::new("main_text_input")));
         }
 
         if response.has_focus() {
             let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
             let shift_held = ui.input(|i| i.modifiers.shift);
-            if enter_pressed && !shift_held && !state.input_text.trim().is_empty() {
+            // When the user confirms an IME candidate with Enter, an ImeEvent::Commit
+            // is present in the same frame.  In that case the Enter key should not
+            // also trigger text submission.
+            let ime_commit = ui.input(|i| {
+                i.events
+                    .iter()
+                    .any(|e| matches!(e, egui::Event::Ime(egui::ImeEvent::Commit(_))))
+            });
+            if enter_pressed && !shift_held && !ime_commit && !state.input_text.trim().is_empty() {
                 state.pending_send = Some(state.input_text.trim().to_string());
                 state.input_text.clear();
             }
