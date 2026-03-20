@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="pod" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#6dbe4a"/>
+      <stop offset="100%" stop-color="#3d8c28"/>
+    </linearGradient>
+    <linearGradient id="bean" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#b8e986"/>
+      <stop offset="100%" stop-color="#8cc63f"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#78c878" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#78c878" stop-opacity="0.3"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background rounded square -->
+  <rect x="16" y="16" width="480" height="480" rx="80" fill="#1a1a2e"/>
+
+  <!-- "Aa" text (left side) -->
+  <text x="115" y="280" text-anchor="middle" font-family="sans-serif" font-weight="bold" font-size="82" fill="#e0e0e0" opacity="0.9">Aa</text>
+
+  <!-- Arrow right -->
+  <path d="M168 256 L208 256" stroke="#78c878" stroke-width="5" stroke-linecap="round"/>
+  <path d="M198 242 L214 256 L198 270" fill="none" stroke="#78c878" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Edamame pod (right side, centered vertically) -->
+  <path d="M270 195 C248 208, 235 238, 238 275 C241 312, 268 340, 295 344 C308 347, 317 344, 326 335 C353 308, 362 268, 358 232 C354 205, 332 188, 305 185 C287 183, 277 187, 270 195Z"
+        fill="url(#pod)" stroke="#2d7a1a" stroke-width="2.5"/>
+
+  <!-- Bean 1 (upper) -->
+  <ellipse cx="300" cy="232" rx="26" ry="21" fill="url(#bean)" transform="rotate(-8 300 232)"/>
+
+  <!-- Bean 2 (lower) -->
+  <ellipse cx="302" cy="290" rx="28" ry="22" fill="url(#bean)" transform="rotate(-5 302 290)"/>
+
+  <!-- Pod highlight -->
+  <path d="M278 205 C262 222, 254 258, 257 290"
+        fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="5" stroke-linecap="round"/>
+
+  <!-- Sound waves (right side of pod) -->
+  <path d="M365 235 C378 248, 378 278, 365 290" fill="none" stroke="url(#wave)" stroke-width="6" stroke-linecap="round"/>
+  <path d="M383 220 C404 242, 404 285, 383 307" fill="none" stroke="url(#wave)" stroke-width="5" stroke-linecap="round" opacity="0.65"/>
+  <path d="M400 207 C430 237, 430 293, 400 322" fill="none" stroke="url(#wave)" stroke-width="4.5" stroke-linecap="round" opacity="0.35"/>
+
+  <!-- Small stem -->
+  <path d="M290 192 C286 177, 292 168, 303 163" fill="none" stroke="#2d7a1a" stroke-width="3.5" stroke-linecap="round"/>
+</svg>

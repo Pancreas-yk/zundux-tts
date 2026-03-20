@@ -1,9 +1,11 @@
-use zundamon_vrc::ui::theme::Theme;
+use zundux_tts::ui::theme::Theme;
 
 #[test]
 fn default_theme_is_valid() {
     let theme = Theme::default();
-    assert!(theme.validate().is_ok());
+    let validated = theme.validated();
+    // validated() should not change defaults
+    assert_eq!(validated.window_rounding, 12.0);
 }
 
 #[test]
@@ -25,8 +27,9 @@ window_rounding = 8.0
 fn theme_rejects_invalid_rounding() {
     let mut theme = Theme::default();
     theme.window_rounding = f32::NAN;
-    let result = theme.validate();
-    assert!(result.is_err());
+    let validated = theme.validated();
+    // NaN should be replaced with default
+    assert_eq!(validated.window_rounding, Theme::default().window_rounding);
 }
 
 #[test]

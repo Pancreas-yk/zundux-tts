@@ -11,6 +11,17 @@ use config::AppConfig;
 use tts::voicevox::VoicevoxEngine;
 use tts::TtsManager;
 
+fn load_icon() -> Option<egui::IconData> {
+    let png_bytes = include_bytes!("../assets/design-1.png");
+    let img = image::load_from_memory(png_bytes).ok()?.into_rgba8();
+    let (w, h) = img.dimensions();
+    Some(egui::IconData {
+        rgba: img.into_raw(),
+        width: w,
+        height: h,
+    })
+}
+
 fn setup_japanese_fonts(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
 
@@ -57,7 +68,7 @@ fn main() -> eframe::Result<()> {
         flag_clone.store(true, std::sync::atomic::Ordering::SeqCst);
         // Cleanup Docker container
         let _ = std::process::Command::new("docker")
-            .args(["stop", "zundamon-voicevox"])
+            .args(["stop", "zundux-voicevox"])
             .output();
     })
     .expect("Failed to set SIGTERM handler");
@@ -76,21 +87,29 @@ fn main() -> eframe::Result<()> {
     let tts_manager = TtsManager::new(Box::new(engine));
 
     let handle = rt.handle().clone();
+
+    let icon = load_icon();
+
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([560.0, 700.0])
+        .with_min_inner_size([400.0, 500.0])
+        .with_transparent(true)
+        .with_decorations(false);
+    if let Some(icon) = icon {
+        viewport = viewport.with_icon(icon);
+    }
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([560.0, 700.0])
-            .with_min_inner_size([400.0, 500.0])
-            .with_transparent(true)
-            .with_decorations(false),
+        viewport,
         ..Default::default()
     };
 
     eframe::run_native(
-        "ずんだもん VRC",
+        "zundux_tts",
         options,
         Box::new(move |cc| {
             setup_japanese_fonts(&cc.egui_ctx);
-            Ok(Box::new(app::ZundamonApp::new(config, tts_manager, handle)))
+            Ok(Box::new(app::ZunduxApp::new(config, tts_manager, handle)))
         }),
     )
 }

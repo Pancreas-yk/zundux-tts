@@ -23,10 +23,6 @@ impl VirtualDevice {
         format!("{}_mic", self.sink_name)
     }
 
-    pub fn monitor_source(&self) -> String {
-        format!("{}.monitor", self.sink_name)
-    }
-
     fn sink_exists(&self) -> Result<bool> {
         let output = Command::new("pactl")
             .args(["list", "short", "sinks"])
@@ -59,7 +55,8 @@ impl VirtualDevice {
                     "module-null-sink",
                     &format!("sink_name={}", self.sink_name),
                     &format!(
-                        "sink_properties=device.description=\"Zundamon_VRC_Virtual_Mic\""
+                        "sink_properties=device.description=\"{}_Virtual_Mic\"",
+                        self.sink_name
                     ),
                 ])
                 .output()
@@ -100,7 +97,8 @@ impl VirtualDevice {
                     &format!("source_name={}", source_name),
                     &format!("master={}.monitor", self.sink_name),
                     &format!(
-                        "source_properties=device.description=\"Zundamon_VRC_Microphone\""
+                        "source_properties=device.description=\"{}_Microphone\"",
+                        self.sink_name
                     ),
                 ])
                 .output()
@@ -131,14 +129,53 @@ impl VirtualDevice {
         Ok(())
     }
 
+    /// List available PulseAudio input sources (excluding monitors).
+    pub fn list_sources() -> Result<Vec<(String, String)>> {
+        let output = Command::new("pactl")
+            .args(["list", "sources"])
+            .output()
+            .context("Failed to run pactl list sources")?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+
+        let mut sources = Vec::new();
+        let mut current_name: Option<String> = None;
+        let mut current_desc: Option<String> = None;
+
+        for line in stdout.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("Name: ") {
+                // Flush previous source
+                if let Some(name) = current_name.take() {
+                    let desc = current_desc.take().unwrap_or_else(|| name.clone());
+                    if !name.contains(".monitor") {
+                        sources.push((name, desc));
+                    }
+                }
+                current_name = Some(trimmed.trim_start_matches("Name: ").to_string());
+                current_desc = None;
+            } else if trimmed.starts_with("Description: ") {
+                current_desc = Some(trimmed.trim_start_matches("Description: ").to_string());
+            }
+        }
+        // Flush last source
+        if let Some(name) = current_name {
+            let desc = current_desc.unwrap_or_else(|| name.clone());
+            if !name.contains(".monitor") {
+                sources.push((name, desc));
+            }
+        }
+
+        Ok(sources)
+    }
+
     /// Whether the real microphone is currently being passed through to the virtual sink.
     pub fn is_mic_passthrough(&self) -> bool {
         self.loopback_module_id.is_some()
     }
 
-    /// Enable real microphone passthrough: routes the default PulseAudio source
+    /// Enable real microphone passthrough: routes a specific PulseAudio source
     /// into the virtual sink so VRChat hears the real mic instead of TTS.
-    pub fn enable_mic_passthrough(&mut self) -> Result<()> {
+    pub fn enable_mic_passthrough(&mut self, source_name: &str) -> Result<()> {
         if self.loopback_module_id.is_some() {
             return Ok(()); // Already enabled
         }
@@ -147,7 +184,7 @@ impl VirtualDevice {
             .args([
                 "load-module",
                 "module-loopback",
-                "source=@DEFAULT_SOURCE@",
+                &format!("source={}", source_name),
                 &format!("sink={}", self.sink_name),
                 "latency_msec=30",
             ])
@@ -180,6 +217,30 @@ impl VirtualDevice {
             }
         }
         Ok(())
+    }
+
+    /// Remove stale loopback modules targeting this sink from previous sessions.
+    pub fn cleanup_stale_loopbacks(&self) {
+        let output = Command::new("pactl")
+            .args(["list", "short", "modules"])
+            .output();
+        if let Ok(output) = output {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            for line in stdout.lines() {
+                if line.contains("module-loopback") && line.contains(&self.sink_name) {
+                    if let Some(id_str) = line.split_whitespace().next() {
+                        let _ = Command::new("pactl")
+                            .args(["unload-module", id_str])
+                            .output();
+                        tracing::info!(
+                            "Cleaned up stale loopback module {} (sink={})",
+                            id_str,
+                            self.sink_name
+                        );
+                    }
+                }
+            }
+        }
     }
 
     pub fn destroy(&mut self) -> Result<()> {

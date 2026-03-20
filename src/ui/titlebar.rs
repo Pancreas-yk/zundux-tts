@@ -27,7 +27,7 @@ pub fn show(ctx: &egui::Context, theme: &Theme) {
                 ui.painter().text(
                     title_rect.center(),
                     egui::Align2::CENTER_CENTER,
-                    "ZUNDAMON VRC",
+                    "ZunduxTTS",
                     egui::FontId::proportional(11.0),
                     theme.color(theme.titlebar_text),
                 );

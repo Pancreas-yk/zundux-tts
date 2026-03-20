@@ -140,11 +140,19 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
 
         ui.collapsing("ユーザー辞書", |ui| {
             if state.voicevox_connected {
-                if ui.button("辞書を読み込む").clicked() {
-                    state.pending_load_user_dict = true;
-                }
+                ui.horizontal(|ui| {
+                    if ui.button("辞書を読み込む").clicked() {
+                        state.pending_load_user_dict = true;
+                    }
+                    ui.label(
+                        egui::RichText::new("(読み込んでいただくことで既存の割り当てを見られます)")
+                            .small()
+                            .weak(),
+                    );
+                });
                 ui.add_space(4.0);
 
+                // VOICEVOX dictionary entries
                 let mut to_delete = None;
                 for (uuid, surface, pronunciation) in &state.user_dict {
                     ui.horizontal(|ui| {
@@ -156,6 +164,24 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                 }
                 if let Some(uuid) = to_delete {
                     state.pending_delete_dict_word = Some(uuid);
+                }
+
+                // Silent word entries (local)
+                let mut silent_to_delete = None;
+                for (i, word) in state.config.silent_words.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(format!(
+                            "{} → {{silent}}",
+                            word
+                        ));
+                        if ui.small_button("削除").clicked() {
+                            silent_to_delete = Some(i);
+                        }
+                    });
+                }
+                if let Some(idx) = silent_to_delete {
+                    state.config.silent_words.remove(idx);
+                    let _ = state.config.save();
                 }
 
                 ui.add_space(4.0);
@@ -170,16 +196,24 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                     ui.label("読み:");
                     ui.add(
                         egui::TextEdit::singleline(&mut state.new_dict_pronunciation)
-                            .desired_width(100.0),
+                            .desired_width(100.0)
+                            .hint_text("{silent}で無音化"),
                     );
                     if ui.button("追加").clicked()
                         && !state.new_dict_surface.trim().is_empty()
                         && !state.new_dict_pronunciation.trim().is_empty()
                     {
-                        state.pending_add_dict_word = Some((
-                            state.new_dict_surface.trim().to_string(),
-                            state.new_dict_pronunciation.trim().to_string(),
-                        ));
+                        let surface = state.new_dict_surface.trim().to_string();
+                        let pronunciation = state.new_dict_pronunciation.trim().to_string();
+                        if pronunciation == "{silent}" {
+                            // Store locally as a silent word
+                            if !state.config.silent_words.contains(&surface) {
+                                state.config.silent_words.push(surface);
+                                let _ = state.config.save();
+                            }
+                        } else {
+                            state.pending_add_dict_word = Some((surface, pronunciation));
+                        }
                         state.new_dict_surface.clear();
                         state.new_dict_pronunciation.clear();
                     }
@@ -198,6 +232,62 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                 "自分にも音声を再生（モニター）",
             );
             ui.label("有効にすると、仮想マイクに加えてスピーカーからも音声が聞こえます");
+
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(4.0);
+
+            ui.horizontal(|ui| {
+                ui.label("マイク入力:");
+                if ui.button("更新").clicked() {
+                    state.pending_refresh_mic_sources = true;
+                }
+            });
+
+            if state.available_mic_sources.is_empty() {
+                ui.label(
+                    egui::RichText::new("マイクが見つかりません（更新を押してください）")
+                        .small()
+                        .weak(),
+                );
+            } else {
+                let current = state
+                    .config
+                    .mic_source_name
+                    .clone()
+                    .unwrap_or_default();
+                let current_desc = state
+                    .available_mic_sources
+                    .iter()
+                    .find(|(name, _)| *name == current)
+                    .map(|(_, desc)| desc.as_str())
+                    .unwrap_or("未選択");
+
+                egui::ComboBox::from_id_salt("mic_source_combo")
+                    .selected_text(current_desc)
+                    .width(280.0)
+                    .show_ui(ui, |ui| {
+                        for (name, desc) in &state.available_mic_sources {
+                            let is_selected = state
+                                .config
+                                .mic_source_name
+                                .as_deref()
+                                == Some(name.as_str());
+                            if ui.selectable_label(is_selected, desc).clicked() {
+                                state.config.mic_source_name = Some(name.clone());
+                                // Reconnect loopback with new source if mic is on
+                                if state.mic_passthrough {
+                                    state.pending_reconnect_mic = true;
+                                }
+                            }
+                        }
+                    });
+            }
+            ui.label(
+                egui::RichText::new("MIC: ONで使用するマイクデバイスを選択します")
+                    .small()
+                    .weak(),
+            );
         });
 
         ui.add_space(8.0);
@@ -250,6 +340,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                     "デバイス名は英数字、_、- のみ (最大64文字)",
                 );
             }
+            ui.label(
+                egui::RichText::new("名前変更は「削除」→「作成」で反映されます（アプリの再起動は不要）")
+                    .small()
+                    .weak(),
+            );
             ui.horizontal(|ui| {
                 if ui.button("作成").clicked() {
                     state.pending_create_device = true;
@@ -317,33 +412,82 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
 
         // Appearance
         ui.collapsing("外観", |ui| {
-            let theme = &mut state.config.theme;
+            use crate::ui::theme::Theme;
 
-            ui.horizontal(|ui| {
-                ui.label("ウィンドウ透明度:");
-                let mut opacity = theme.window_background[3] as f32 / 255.0 * 100.0;
-                if ui
-                    .add(egui::Slider::new(&mut opacity, 10.0..=100.0).suffix("%"))
-                    .changed()
-                {
-                    let alpha = (opacity / 100.0 * 255.0).round() as u8;
-                    theme.window_background[3] = alpha;
-                    state.needs_theme_update = true;
-                }
-            });
+            // Window background: color + transparency side by side
+            show_color_with_opacity(
+                ui,
+                state,
+                "ウィンドウ背景",
+                "window_background",
+                |t| &mut t.window_background,
+            );
+            // Titlebar background: color + transparency side by side
+            show_color_with_opacity(
+                ui,
+                state,
+                "タイトルバー背景",
+                "titlebar_background",
+                |t| &mut t.titlebar_background,
+            );
 
-            ui.horizontal(|ui| {
-                ui.label("タイトルバー透明度:");
-                let mut opacity = theme.titlebar_background[3] as f32 / 255.0 * 100.0;
-                if ui
-                    .add(egui::Slider::new(&mut opacity, 10.0..=100.0).suffix("%"))
-                    .changed()
-                {
-                    let alpha = (opacity / 100.0 * 255.0).round() as u8;
-                    theme.titlebar_background[3] = alpha;
-                    state.needs_theme_update = true;
-                }
-            });
+            ui.add_space(8.0);
+            ui.separator();
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new("カラー設定（#RRGGBB または #RRGGBBAA）").small());
+            ui.add_space(4.0);
+
+            let color_fields: &[(&str, &str, fn(&mut crate::ui::theme::Theme) -> &mut [u8; 4])] = &[
+                ("タイトルバー文字", "titlebar_text", |t| &mut t.titlebar_text),
+                ("パネル背景", "panel_background", |t| &mut t.panel_background),
+                ("メイン文字", "text_primary", |t| &mut t.text_primary),
+                ("サブ文字", "text_secondary", |t| &mut t.text_secondary),
+                ("控えめ文字", "text_muted", |t| &mut t.text_muted),
+                ("アクセント", "accent", |t| &mut t.accent),
+                ("アクセント(ホバー)", "accent_hover", |t| &mut t.accent_hover),
+                ("ボタン背景", "button_background", |t| &mut t.button_background),
+                ("入力欄背景", "input_background", |t| &mut t.input_background),
+                ("チップ背景", "chip_background", |t| &mut t.chip_background),
+                ("タブ背景(選択)", "tab_active_background", |t| &mut t.tab_active_background),
+            ];
+
+            for &(label, key, accessor) in color_fields {
+                let current = accessor(&mut state.config.theme).clone();
+                let buf = state
+                    .color_edit_buffers
+                    .entry(key.to_string())
+                    .or_insert_with(|| Theme::to_hex(current));
+
+                ui.horizontal(|ui| {
+                    // Color preview swatch
+                    let preview_color = state.config.theme.color(current);
+                    let (rect, _) = ui.allocate_exact_size(
+                        egui::vec2(16.0, 16.0),
+                        egui::Sense::hover(),
+                    );
+                    ui.painter().rect_filled(rect, 2.0, preview_color);
+
+                    ui.label(format!("{}:", label));
+                    let response = ui.add(
+                        egui::TextEdit::singleline(buf)
+                            .desired_width(100.0)
+                            .hint_text("#RRGGBBAA"),
+                    );
+                    if response.changed() {
+                        if let Some(parsed) = Theme::parse_hex(buf) {
+                            *accessor(&mut state.config.theme) = parsed;
+                            state.needs_theme_update = true;
+                        }
+                    }
+                });
+            }
+
+            ui.add_space(4.0);
+            if ui.button("デフォルトに戻す").clicked() {
+                state.config.theme = Theme::default();
+                state.color_edit_buffers.clear();
+                state.needs_theme_update = true;
+            }
         });
 
         ui.add_space(12.0);
@@ -355,4 +499,71 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
             }
         }
     });
+}
+
+/// Color hex input (RGB only) + transparency slider for a single RGBA field.
+fn show_color_with_opacity(
+    ui: &mut egui::Ui,
+    state: &mut AppState,
+    label: &str,
+    key: &str,
+    accessor: fn(&mut crate::ui::theme::Theme) -> &mut [u8; 4],
+) {
+    use crate::ui::theme::Theme;
+
+    let current = *accessor(&mut state.config.theme);
+    let rgb_hex = format!("#{:02X}{:02X}{:02X}", current[0], current[1], current[2]);
+    let buf = state
+        .color_edit_buffers
+        .entry(key.to_string())
+        .or_insert_with(|| rgb_hex.clone());
+
+    ui.horizontal(|ui| {
+        // Color preview swatch
+        let preview_color = state.config.theme.color(current);
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+        ui.painter().rect_filled(rect, 2.0, preview_color);
+
+        ui.label(format!("{}:", label));
+        let response = ui.add(
+            egui::TextEdit::singleline(buf)
+                .desired_width(80.0)
+                .hint_text("#RRGGBB"),
+        );
+        if response.changed() {
+            if let Some(parsed) = Theme::parse_hex(buf) {
+                let field = accessor(&mut state.config.theme);
+                // Only update RGB, preserve current alpha
+                field[0] = parsed[0];
+                field[1] = parsed[1];
+                field[2] = parsed[2];
+                state.needs_theme_update = true;
+            }
+        }
+
+        // White (#FFFFFF) uses premultiplied alpha — lowering alpha has no visible effect
+        let rgb = accessor(&mut state.config.theme);
+        let is_white = rgb[0] == 255 && rgb[1] == 255 && rgb[2] == 255;
+
+        let mut opacity = accessor(&mut state.config.theme)[3] as f32 / 255.0 * 100.0;
+        if ui
+            .add_enabled(
+                !is_white,
+                egui::Slider::new(&mut opacity, 0.0..=100.0)
+                    .suffix("%"),
+            )
+            .changed()
+        {
+            let alpha = (opacity / 100.0 * 255.0).round() as u8;
+            accessor(&mut state.config.theme)[3] = alpha;
+            state.needs_theme_update = true;
+        }
+    });
+    if *accessor(&mut state.config.theme) == [255, 255, 255, current[3]] && current[0] == 255 && current[1] == 255 && current[2] == 255 {
+        ui.label(
+            egui::RichText::new("  白(#FFFFFF)はpremultiplied alphaのため透明度を変更できません")
+                .small()
+                .weak(),
+        );
+    }
 }

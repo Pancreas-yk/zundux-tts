@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=ZunduxTTS
+Comment=VOICEVOX TTS virtual microphone
+Exec=sh -c 'exec "$(dirname "$(readlink -f "%k")")/launch.sh"'
+Icon=zundux_tts
+Terminal=false
+StartupWMClass=zundux_tts
+Categories=AudioVideo;Audio;

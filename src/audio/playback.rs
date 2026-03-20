@@ -6,37 +6,62 @@ use std::process::Command;
 /// Try to play WAV data through rodio by finding the virtual device via cpal.
 /// Falls back to paplay subprocess if rodio can't find the device.
 /// If `monitor` is true, also plays to the default output device for self-monitoring.
-pub fn play_wav(wav_data: Vec<u8>, device_name: &str, monitor: bool) -> Result<()> {
+/// `cancel` can be used to stop playback early.
+pub fn play_wav(
+    wav_data: Vec<u8>,
+    device_name: &str,
+    monitor: bool,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<()> {
     if monitor {
         let data_clone = wav_data.clone();
+        let cancel_clone = cancel.clone();
         std::thread::spawn(move || {
-            if let Err(e) = play_on_default_output(&data_clone) {
-                tracing::warn!("Monitor playback failed: {}", e);
+            if let Err(e) = play_on_default_output_cancellable(&data_clone, &cancel_clone) {
+                if !cancel_clone.load(std::sync::atomic::Ordering::SeqCst) {
+                    tracing::warn!("Monitor playback failed: {}", e);
+                }
             }
         });
     }
 
-    match play_with_rodio(&wav_data, device_name) {
+    match play_with_rodio_cancellable(&wav_data, device_name, &cancel) {
         Ok(()) => Ok(()),
         Err(e) => {
+            if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+                return Ok(());
+            }
             tracing::warn!("rodio playback failed ({}), falling back to paplay", e);
-            play_with_paplay(&wav_data, device_name)
+            play_with_paplay(&wav_data, device_name, &cancel)
         }
     }
 }
 
-/// Play WAV data on the default output device (speakers/headphones) for self-monitoring.
-fn play_on_default_output(wav_data: &[u8]) -> Result<()> {
+/// Play WAV data on the default output device with cancel support.
+fn play_on_default_output_cancellable(
+    wav_data: &[u8],
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<()> {
     let (_stream, handle) = OutputStream::try_default().context("Failed to open default output")?;
     let sink = Sink::try_new(&handle).context("Failed to create sink for monitor")?;
     let cursor = Cursor::new(wav_data.to_vec());
     let source = rodio::Decoder::new(cursor).context("Failed to decode WAV for monitor")?;
     sink.append(source);
-    sink.sleep_until_end();
+    while !sink.empty() {
+        if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+            sink.stop();
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     Ok(())
 }
 
-fn play_with_rodio(wav_data: &[u8], device_name: &str) -> Result<()> {
+fn play_with_rodio_cancellable(
+    wav_data: &[u8],
+    device_name: &str,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<()> {
     use rodio::cpal::traits::{DeviceTrait, HostTrait};
 
     let host = rodio::cpal::default_host();
@@ -55,10 +80,15 @@ fn play_with_rodio(wav_data: &[u8], device_name: &str) -> Result<()> {
     let sink = Sink::try_new(&handle).context("Failed to create sink")?;
 
     let cursor = Cursor::new(wav_data.to_vec());
-    let source =
-        rodio::Decoder::new(cursor).context("Failed to decode WAV data")?;
+    let source = rodio::Decoder::new(cursor).context("Failed to decode WAV data")?;
     sink.append(source);
-    sink.sleep_until_end();
+    while !sink.empty() {
+        if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+            sink.stop();
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 
     Ok(())
 }
@@ -181,7 +211,11 @@ fn play_file_default_output(
     Ok(())
 }
 
-fn play_with_paplay(wav_data: &[u8], device_name: &str) -> Result<()> {
+fn play_with_paplay(
+    wav_data: &[u8],
+    device_name: &str,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<()> {
     use std::io::Write;
     use std::process::Stdio;
 
@@ -203,9 +237,26 @@ fn play_with_paplay(wav_data: &[u8], device_name: &str) -> Result<()> {
     }
     drop(child.stdin.take());
 
-    let status = child.wait().context("Failed to wait for paplay")?;
-    if !status.success() {
-        anyhow::bail!("paplay exited with status {}", status);
+    // Poll for cancel while waiting for paplay to finish
+    loop {
+        if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+            tracing::info!("TTS stop: killing paplay (pid {})", child.id());
+            let _ = child.kill(); // SIGKILL — more reliable than SIGTERM on PipeWire
+            let _ = child.wait();
+            return Ok(());
+        }
+        match child.try_wait().context("Failed to wait for paplay")? {
+            Some(status) => {
+                if !status.success() {
+                    if let Some(code) = status.code() {
+                        anyhow::bail!("paplay exited with status {}", code);
+                    }
+                }
+                return Ok(());
+            }
+            None => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        }
     }
-    Ok(())
 }

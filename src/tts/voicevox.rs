@@ -28,24 +28,36 @@ impl VoicevoxEngine {
     }
 
     pub async fn add_user_dict_word(&self, surface: &str, pronunciation: &str) -> Result<String> {
-        let url = format!("{}/user_dict", self.base_url);
+        let url = format!("{}/user_dict_word", self.base_url);
+        let fullwidth_surface: String = surface.chars().map(halfwidth_to_fullwidth).collect();
+        let katakana: String = pronunciation.chars().map(hiragana_to_katakana).collect();
         let resp = self.client.post(&url)
             .query(&[
-                ("surface", surface),
-                ("pronunciation", pronunciation),
+                ("surface", fullwidth_surface.as_str()),
+                ("pronunciation", katakana.as_str()),
                 ("accent_type", "1"),
             ])
             .send().await
             .context("Failed to add dictionary word")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("VOICEVOX returned {} : {}", status, body);
+        }
         let uuid: String = resp.json().await
             .context("Failed to parse add word response")?;
         Ok(uuid)
     }
 
     pub async fn delete_user_dict_word(&self, word_uuid: &str) -> Result<()> {
-        let url = format!("{}/user_dict/{}", self.base_url, word_uuid);
-        self.client.delete(&url).send().await
+        let url = format!("{}/user_dict_word/{}", self.base_url, word_uuid);
+        let resp = self.client.delete(&url).send().await
             .context("Failed to delete dictionary word")?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            anyhow::bail!("VOICEVOX returned {} : {}", status, body);
+        }
         Ok(())
     }
 }
@@ -65,12 +77,14 @@ impl TtsEngine for VoicevoxEngine {
     }
 
     async fn synthesize(&self, text: &str, params: &SynthParams) -> Result<Vec<u8>> {
+        // Convert half-width ASCII to full-width so VOICEVOX user dictionary entries match
+        let fullwidth_text: String = text.chars().map(halfwidth_to_fullwidth).collect();
         // Step 1: Create audio query
         let query_url = format!("{}/audio_query", self.base_url);
         let resp = self
             .client
             .post(&query_url)
-            .query(&[("text", text), ("speaker", &params.speaker_id.to_string())])
+            .query(&[("text", fullwidth_text.as_str()), ("speaker", &params.speaker_id.to_string())])
             .send()
             .await
             .context("Failed to create audio query")?;
@@ -123,5 +137,27 @@ impl TtsEngine for VoicevoxEngine {
             Ok(resp) => Ok(resp.status().is_success()),
             Err(_) => Ok(false),
         }
+    }
+}
+
+/// Convert a hiragana character to katakana. Non-hiragana characters are passed through.
+fn hiragana_to_katakana(c: char) -> char {
+    // Hiragana range: U+3041..=U+3096, katakana offset: +0x60
+    if ('\u{3041}'..='\u{3096}').contains(&c) {
+        char::from_u32(c as u32 + 0x60).unwrap_or(c)
+    } else {
+        c
+    }
+}
+
+/// Convert half-width ASCII to full-width equivalents for VOICEVOX dictionary matching.
+fn halfwidth_to_fullwidth(c: char) -> char {
+    match c {
+        ' ' => '\u{3000}', // full-width space
+        '!' ..= '~' => {
+            // ASCII printable range U+0021..U+007E → full-width U+FF01..U+FF5E
+            char::from_u32(c as u32 + 0xFEE0).unwrap_or(c)
+        }
+        _ => c,
     }
 }

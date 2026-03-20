@@ -25,6 +25,16 @@ pub fn apply_echo(wav_data: &[u8], delay_ms: u32, decay: f64) -> Vec<u8> {
 
     let delay_samples = (sample_rate as usize * delay_ms as usize) / 1000;
 
+    // Extend samples so echo tail can decay naturally.
+    // Number of extra repeats until echo is inaudible (below -60dB).
+    let repeats = if decay > 0.0 && decay < 1.0 {
+        (-60.0_f64 / (20.0 * decay.log10())).ceil() as usize
+    } else {
+        0
+    };
+    let tail_len = delay_samples * repeats;
+    samples.resize(samples.len() + tail_len, 0);
+
     for i in delay_samples..samples.len() {
         let echo = (samples[i - delay_samples] as f64 * decay) as i64;
         let mixed = samples[i] as i64 + echo;

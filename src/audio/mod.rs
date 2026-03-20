@@ -27,13 +27,4 @@ impl AudioManager {
     pub fn destroy_device(&mut self) -> Result<()> {
         self.virtual_device.destroy()
     }
-
-    pub fn device_name(&self) -> &str {
-        &self.virtual_device.sink_name
-    }
-
-    pub fn play_wav(&self, wav_data: Vec<u8>, monitor: bool) -> Result<()> {
-        let name = self.virtual_device.sink_name.clone();
-        playback::play_wav(wav_data, &name, monitor)
-    }
 }

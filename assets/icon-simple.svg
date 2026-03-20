@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Background -->
+  <rect x="16" y="16" width="480" height="480" rx="80" fill="#1f1e33"/>
+
+  <!-- Edamame pod - pinched shape with 2 bean bulges -->
+  <path d="M220 140
+           C190 145, 165 175, 160 210
+           C155 245, 165 270, 175 285
+           C165 300, 155 330, 155 360
+           C155 400, 180 430, 215 435
+           C245 438, 265 420, 275 395
+           C285 370, 280 340, 270 315
+           C280 295, 290 265, 290 235
+           C290 195, 275 155, 250 143
+           C238 138, 228 137, 220 140Z"
+        fill="#5ab038" stroke="#2a6b1a" stroke-width="3"/>
+
+  <!-- Bean bulge 1 (upper) -->
+  <ellipse cx="225" cy="215" rx="50" ry="52" fill="#6fc244" transform="rotate(-5 225 215)"/>
+
+  <!-- Bean bulge 2 (lower) -->
+  <ellipse cx="218" cy="360" rx="48" ry="50" fill="#6fc244" transform="rotate(3 218 360)"/>
+
+  <!-- Stem -->
+  <path d="M232 145 C228 128, 235 118, 248 112" fill="none" stroke="#2a6b1a" stroke-width="4" stroke-linecap="round"/>
+
+  <!-- Sound waves (3 lines, uniform opacity) -->
+  <path d="M340 235 C355 252, 355 293, 340 310" fill="none" stroke="#78c878" stroke-width="8" stroke-linecap="round"/>
+  <path d="M362 215 C385 240, 385 305, 362 330" fill="none" stroke="#78c878" stroke-width="8" stroke-linecap="round"/>
+  <path d="M384 195 C415 228, 415 317, 384 350" fill="none" stroke="#78c878" stroke-width="8" stroke-linecap="round"/>
+</svg>

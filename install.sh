@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# ===== ずんだもん VRC インストーラー (Arch/Manjaro) =====
+# ===== ZunduxTTS インストーラー (Arch/Manjaro) =====
 
 BOLD='\033[1m'
 GREEN='\033[0;32m'
@@ -16,8 +16,9 @@ error() { echo -e "${RED}[ERROR]${NC} $*"; }
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_BIN="$HOME/.local/bin"
 INSTALL_APPS="$HOME/.local/share/applications"
-CONFIG_DIR="$HOME/.config/zundamon_vrc"
-GITHUB_REPO="ediblepancreas/zundamon_vrc"
+INSTALL_ICONS="$HOME/.local/share/icons/hicolor/256x256/apps"
+CONFIG_DIR="$HOME/.config/zundux_tts"
+GITHUB_REPO="ediblepancreas/zundux_tts"
 
 download_binary() {
     info "最新リリースをダウンロード中..."
@@ -30,10 +31,10 @@ download_binary() {
     }
 
     local binary_url
-    binary_url=$(echo "$release_json" | grep -o '"browser_download_url":[[:space:]]*"[^"]*zundamon_vrc-linux-x86_64"' | grep -o 'https://[^"]*')
+    binary_url=$(echo "$release_json" | grep -o '"browser_download_url":[[:space:]]*"[^"]*zundux_tts-linux-x86_64"' | grep -o 'https://[^"]*')
 
     # Validate URL pattern
-    if ! echo "$binary_url" | grep -qE "^https://github\.com/${GITHUB_REPO}/releases/download/v[0-9]+\.[0-9]+\.[0-9]+/zundamon_vrc-linux-x86_64$"; then
+    if ! echo "$binary_url" | grep -qE "^https://github\.com/${GITHUB_REPO}/releases/download/v[0-9]+\.[0-9]+\.[0-9]+/zundux_tts-linux-x86_64$"; then
         error "ダウンロードURLが不正です: $binary_url"
         return 1
     fi
@@ -45,7 +46,7 @@ download_binary() {
     tmpdir=$(mktemp -d)
     trap "rm -rf '$tmpdir'" EXIT
 
-    curl -fsSL "$binary_url" -o "$tmpdir/zundamon_vrc-linux-x86_64" || {
+    curl -fsSL "$binary_url" -o "$tmpdir/zundux_tts-linux-x86_64" || {
         error "バイナリのダウンロードに失敗しました"
         return 1
     }
@@ -62,18 +63,18 @@ download_binary() {
     fi
     cd "$SCRIPT_DIR"
 
-    cp "$tmpdir/zundamon_vrc-linux-x86_64" "$INSTALL_BIN/zundamon_vrc"
-    chmod +x "$INSTALL_BIN/zundamon_vrc"
-    info "バイナリをインストール: $INSTALL_BIN/zundamon_vrc"
+    cp "$tmpdir/zundux_tts-linux-x86_64" "$INSTALL_BIN/zundux_tts"
+    chmod +x "$INSTALL_BIN/zundux_tts"
+    info "バイナリをインストール: $INSTALL_BIN/zundux_tts"
 }
 
 # ---------- Step 1: 依存パッケージのインストール ----------
 info "依存パッケージを確認中..."
 
 if [ "${1:-}" = "--from-source" ]; then
-    PACKAGES=(base-devel rust docker pulseaudio noto-fonts-cjk yt-dlp ffmpeg)
+    PACKAGES=(base-devel rust docker pulseaudio noto-fonts-cjk ffmpeg)
 else
-    PACKAGES=(docker pulseaudio noto-fonts-cjk yt-dlp ffmpeg)
+    PACKAGES=(docker pulseaudio noto-fonts-cjk ffmpeg)
 fi
 MISSING=()
 
@@ -163,6 +164,7 @@ fi
 mkdir -p "$INSTALL_BIN"
 mkdir -p "$INSTALL_APPS"
 mkdir -p "$CONFIG_DIR"
+mkdir -p "$INSTALL_ICONS"
 
 if [ "${1:-}" = "--from-source" ]; then
     info "ソースからビルド中..."
@@ -172,8 +174,8 @@ if [ "${1:-}" = "--from-source" ]; then
     fi
     cd "$SCRIPT_DIR"
     cargo build --release
-    cp "$SCRIPT_DIR/target/release/zundamon_vrc" "$INSTALL_BIN/zundamon_vrc"
-    info "バイナリをインストール: $INSTALL_BIN/zundamon_vrc"
+    cp "$SCRIPT_DIR/target/release/zundux_tts" "$INSTALL_BIN/zundux_tts"
+    info "バイナリをインストール: $INSTALL_BIN/zundux_tts"
 else
     download_binary
 fi
@@ -182,16 +184,16 @@ fi
 DOCKER_CMD="docker run --rm ${GPU_FLAGS:+$GPU_FLAGS }-p 50021:50021 $VOICEVOX_IMAGE"
 
 # Create launch script
-cat > "$INSTALL_BIN/zundamon_vrc_launch.sh" << 'LAUNCHER_EOF'
+cat > "$INSTALL_BIN/zundux_tts_launch.sh" << 'LAUNCHER_EOF'
 #!/usr/bin/env bash
-VOICEVOX_CONTAINER="zundamon-voicevox"
+VOICEVOX_CONTAINER="zundux-voicevox"
 LAUNCHER_EOF
 
 # Append image and GPU flags safely
-printf 'VOICEVOX_IMAGE=%q\n' "$VOICEVOX_IMAGE" >> "$INSTALL_BIN/zundamon_vrc_launch.sh"
-printf 'GPU_FLAGS=%q\n' "$GPU_FLAGS" >> "$INSTALL_BIN/zundamon_vrc_launch.sh"
+printf 'VOICEVOX_IMAGE=%q\n' "$VOICEVOX_IMAGE" >> "$INSTALL_BIN/zundux_tts_launch.sh"
+printf 'GPU_FLAGS=%q\n' "$GPU_FLAGS" >> "$INSTALL_BIN/zundux_tts_launch.sh"
 
-cat >> "$INSTALL_BIN/zundamon_vrc_launch.sh" << 'LAUNCHER_EOF'
+cat >> "$INSTALL_BIN/zundux_tts_launch.sh" << 'LAUNCHER_EOF'
 
 # Start VOICEVOX if not running
 if ! docker ps --format '{{.Names}}' | grep -q "^${VOICEVOX_CONTAINER}$"; then
@@ -199,29 +201,39 @@ if ! docker ps --format '{{.Names}}' | grep -q "^${VOICEVOX_CONTAINER}$"; then
 fi
 
 # Run the app
-"$HOME/.local/bin/zundamon_vrc"
+"$HOME/.local/bin/zundux_tts"
 
 # Stop VOICEVOX on exit
 docker stop "$VOICEVOX_CONTAINER" 2>/dev/null || true
 LAUNCHER_EOF
 
-chmod +x "$INSTALL_BIN/zundamon_vrc_launch.sh"
-info "ランチャーをインストール: $INSTALL_BIN/zundamon_vrc_launch.sh"
+chmod +x "$INSTALL_BIN/zundux_tts_launch.sh"
+info "ランチャーをインストール: $INSTALL_BIN/zundux_tts_launch.sh"
 
 # Create .desktop file
-cat > "$INSTALL_APPS/zundamon_vrc.desktop" << DESKTOP_EOF
+cat > "$INSTALL_APPS/zundux_tts.desktop" << DESKTOP_EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
-Name=ずんだもん VRC
-Comment=VOICEVOX TTS for VRChat via virtual microphone
-Exec=$INSTALL_BIN/zundamon_vrc_launch.sh
-Icon=audio-input-microphone
+Name=ZunduxTTS
+Comment=VOICEVOX TTS virtual microphone
+Exec=$INSTALL_BIN/zundux_tts_launch.sh
+Icon=zundux_tts
 Terminal=false
+StartupWMClass=zundux_tts
 Categories=AudioVideo;Audio;
 DESKTOP_EOF
 
-info "デスクトップエントリをインストール: $INSTALL_APPS/zundamon_vrc.desktop"
+info "デスクトップエントリをインストール: $INSTALL_APPS/zundux_tts.desktop"
+
+# Install icon
+cp "$SCRIPT_DIR/assets/design-1.png" "$INSTALL_ICONS/zundux_tts.png"
+info "アイコンをインストール: $INSTALL_ICONS/zundux_tts.png"
+
+# Update icon cache
+if command -v gtk-update-icon-cache &>/dev/null; then
+    gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
+fi
 
 # Update config with VOICEVOX Docker settings
 if [ -f "$CONFIG_DIR/config.toml" ]; then
@@ -251,8 +263,8 @@ info "設定ファイルを更新: $CONFIG_DIR/config.toml"
 echo ""
 echo -e "${GREEN}${BOLD}===== インストール完了！ =====${NC}"
 echo ""
-echo "アプリケーションメニューから「ずんだもん VRC」を起動できます。"
-echo "またはコマンドラインから: zundamon_vrc_launch.sh"
+echo "アプリケーションメニューから「ZunduxTTS」を起動できます。"
+echo "またはコマンドラインから: zundux_tts_launch.sh"
 echo ""
 if [ "$NEED_RELOGIN" = true ]; then
     echo -e "${YELLOW}${BOLD}重要: dockerグループへの追加を反映するため、再ログインしてください。${NC}"

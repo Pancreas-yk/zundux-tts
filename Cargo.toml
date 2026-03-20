@@ -1,5 +1,5 @@
 [package]
-name = "zundamon_vrc"
+name = "zundux_tts"
 version = "0.1.0"
 edition = "2021"
 
@@ -23,3 +23,4 @@ url = "2"
 shell-words = "1"
 ctrlc = "3"
 libc = "0.2"
+image = { version = "0.25", default-features = false, features = ["png"] }

@@ -1,4 +1,3 @@
-use anyhow::Result;
 use egui::{Color32, CornerRadius, Stroke, Style, Visuals};
 use serde::{Deserialize, Serialize};
 
@@ -67,31 +66,6 @@ impl Theme {
         Color32::from_rgba_premultiplied(rgba[0], rgba[1], rgba[2], rgba[3])
     }
 
-    pub fn validate(&self) -> Result<()> {
-        let floats = [
-            ("window_rounding", self.window_rounding, 0.0, 50.0),
-            ("button_rounding", self.button_rounding, 0.0, 50.0),
-            ("input_rounding", self.input_rounding, 0.0, 50.0),
-            ("chip_rounding", self.chip_rounding, 0.0, 50.0),
-            ("tab_rounding", self.tab_rounding, 0.0, 50.0),
-            ("spacing_small", self.spacing_small, 0.0, 100.0),
-            ("spacing_medium", self.spacing_medium, 0.0, 100.0),
-            ("spacing_large", self.spacing_large, 0.0, 100.0),
-        ];
-        for (name, value, min, max) in floats {
-            if !value.is_finite() || value < min || value > max {
-                anyhow::bail!(
-                    "Theme field '{}' out of range: {} (expected {}-{})",
-                    name,
-                    value,
-                    min,
-                    max
-                );
-            }
-        }
-        Ok(())
-    }
-
     pub fn validated(mut self) -> Self {
         let defaults = Self::default();
         let checks = [
@@ -130,6 +104,39 @@ impl Theme {
             }
         }
         self
+    }
+
+    /// Parse a hex color string like "#RRGGBB" or "#RRGGBBAA" into [u8; 4].
+    pub fn parse_hex(hex: &str) -> Option<[u8; 4]> {
+        // Collect ASCII hex chars only, skipping '#' and any non-ASCII (e.g. full-width)
+        let chars: Vec<u8> = hex
+            .trim()
+            .chars()
+            .filter(|c| c.is_ascii_hexdigit())
+            .map(|c| c as u8)
+            .collect();
+        let s = std::str::from_utf8(&chars).ok()?;
+        match s.len() {
+            6 => {
+                let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+                let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+                let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+                Some([r, g, b, 255])
+            }
+            8 => {
+                let r = u8::from_str_radix(&s[0..2], 16).ok()?;
+                let g = u8::from_str_radix(&s[2..4], 16).ok()?;
+                let b = u8::from_str_radix(&s[4..6], 16).ok()?;
+                let a = u8::from_str_radix(&s[6..8], 16).ok()?;
+                Some([r, g, b, a])
+            }
+            _ => None,
+        }
+    }
+
+    /// Format [u8; 4] as "#RRGGBBAA".
+    pub fn to_hex(rgba: [u8; 4]) -> String {
+        format!("#{:02X}{:02X}{:02X}{:02X}", rgba[0], rgba[1], rgba[2], rgba[3])
     }
 
     pub fn to_visuals(&self) -> Visuals {

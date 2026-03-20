@@ -33,13 +33,13 @@ jobs:
 
       - name: Prepare release artifacts
         run: |
-          cp target/release/zundamon_vrc zundamon_vrc-linux-x86_64
-          sha256sum zundamon_vrc-linux-x86_64 > SHA256SUMS
+          cp target/release/zundux_tts zundux_tts-linux-x86_64
+          sha256sum zundux_tts-linux-x86_64 > SHA256SUMS
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            zundamon_vrc-linux-x86_64
+            zundux_tts-linux-x86_64
             SHA256SUMS
           generate_release_notes: true

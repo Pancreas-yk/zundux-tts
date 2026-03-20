@@ -72,6 +72,93 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
             }
         });
     }
+
+    // -- Desktop audio capture --
+    ui.add_space(theme.spacing_large);
+    ui.separator();
+    ui.add_space(theme.spacing_small);
+
+    ui.label(
+        egui::RichText::new("DESKTOP CAPTURE")
+            .size(10.0)
+            .color(theme.color(theme.text_muted)),
+    );
+
+    ui.add_space(theme.spacing_small);
+
+    ui.horizontal(|ui| {
+        if ui
+            .add(
+                egui::Button::new(
+                    egui::RichText::new("アプリ一覧を更新")
+                        .size(10.0)
+                        .color(theme.color(theme.text_secondary)),
+                )
+                .corner_radius(CornerRadius::same(theme.chip_rounding as u8))
+                .fill(theme.color(theme.chip_background)),
+            )
+            .clicked()
+        {
+            state.pending_refresh_sink_inputs = true;
+        }
+        if state.is_capturing {
+            if ui
+                .add(
+                    egui::Button::new(
+                        egui::RichText::new("キャプチャ停止")
+                            .size(10.0)
+                            .color(theme.color(theme.status_error)),
+                    )
+                    .corner_radius(CornerRadius::same(theme.chip_rounding as u8))
+                    .fill(theme.color(theme.chip_background)),
+                )
+                .clicked()
+            {
+                state.pending_stop_capture = true;
+            }
+            ui.label(
+                egui::RichText::new("キャプチャ中")
+                    .size(10.0)
+                    .color(theme.color(theme.status_ok)),
+            );
+        }
+    });
+
+    ui.add_space(theme.spacing_small);
+
+    if state.sink_inputs.is_empty() {
+        ui.label(
+            egui::RichText::new("「アプリ一覧を更新」を押してください")
+                .size(11.0)
+                .color(theme.color(theme.text_muted)),
+        );
+    } else {
+        for input in state.sink_inputs.clone() {
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new(&input.name)
+                        .size(11.0)
+                        .color(theme.color(theme.text_secondary)),
+                );
+                let can_capture = !state.is_capturing && state.device_ready;
+                if ui
+                    .add_enabled(
+                        can_capture,
+                        egui::Button::new(
+                            egui::RichText::new("キャプチャ")
+                                .size(10.0)
+                                .color(theme.color(theme.text_secondary)),
+                        )
+                        .corner_radius(CornerRadius::same(theme.chip_rounding as u8))
+                        .fill(theme.color(theme.chip_background)),
+                    )
+                    .clicked()
+                {
+                    state.pending_start_capture = Some((input.id, input.sink.clone()));
+                }
+            });
+        }
+    }
 }
 
 fn truncate_name(name: &str, max_len: usize) -> String {

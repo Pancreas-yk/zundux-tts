@@ -1,5 +1,4 @@
 pub mod input;
-pub mod media;
 pub mod settings;
 pub mod soundboard;
 pub mod theme;
@@ -9,6 +8,5 @@ pub mod titlebar;
 pub enum Screen {
     Input,
     Soundboard,
-    Media,
     Settings,
 }

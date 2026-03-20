@@ -21,9 +21,12 @@ pub struct AppConfig {
     pub osc_address: String,
     pub osc_port: u16,
     pub soundboard_path: String,
+    pub mic_source_name: Option<String>,
     pub echo_enabled: bool,
     pub echo_delay_ms: u32,
     pub echo_decay: f64,
+    #[serde(default)]
+    pub silent_words: Vec<String>,
     #[serde(default)]
     pub theme: Theme,
 }
@@ -68,12 +71,14 @@ impl Default for AppConfig {
             osc_enabled: false,
             osc_address: "127.0.0.1".to_string(),
             osc_port: 9000,
-            soundboard_path: ProjectDirs::from("", "", "zundamon_vrc")
+            soundboard_path: ProjectDirs::from("", "", "zundux_tts")
                 .map(|d| d.config_dir().join("sounds").to_string_lossy().to_string())
                 .unwrap_or_else(|| "sounds".to_string()),
+            mic_source_name: None,
             echo_enabled: false,
             echo_delay_ms: 200,
             echo_decay: 0.4,
+            silent_words: Vec::new(),
             theme: Theme::default(),
         }
     }
@@ -81,7 +86,7 @@ impl Default for AppConfig {
 
 impl AppConfig {
     fn config_dir() -> Result<PathBuf> {
-        let dirs = ProjectDirs::from("", "", "zundamon_vrc")
+        let dirs = ProjectDirs::from("", "", "zundux_tts")
             .context("Failed to determine config directory")?;
         Ok(dirs.config_dir().to_path_buf())
     }
@@ -149,7 +154,7 @@ impl AppConfig {
     /// Returns the path to the XDG autostart .desktop file
     fn autostart_desktop_path() -> Result<PathBuf> {
         let home = std::env::var("HOME").context("HOME not set")?;
-        Ok(PathBuf::from(home).join(".config/autostart/zundamon_vrc.desktop"))
+        Ok(PathBuf::from(home).join(".config/autostart/zundux_tts.desktop"))
     }
 
     /// Returns the path to the currently running executable
@@ -177,8 +182,8 @@ impl AppConfig {
             let content = format!(
                 "[Desktop Entry]\n\
                  Type=Application\n\
-                 Name=Zundamon VRC\n\
-                 Comment=VOICEVOX TTS voice changer for VRChat\n\
+                 Name=ZunduxTTS\n\
+                 Comment=VOICEVOX TTS virtual microphone\n\
                  Exec={exe_path}\n\
                  Terminal=false\n\
                  X-GNOME-Autostart-enabled=true\n"

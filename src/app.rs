@@ -76,13 +76,6 @@ pub struct AppState {
     pub pending_soundboard_play: Option<std::path::PathBuf>,
     pub pending_soundboard_stop: bool,
     pub is_soundboard_playing: bool,
-    pub media_url: String,
-    pub media_playing: bool,
-    pub pending_media_play: Option<String>,
-    pub pending_media_stop: bool,
-    pub media_deps_checked: bool,
-    pub media_has_ytdlp: bool,
-    pub media_has_ffmpeg: bool,
     pub sink_inputs: Vec<crate::media::desktop_capture::SinkInput>,
     pub pending_refresh_sink_inputs: bool,
     pub pending_start_capture: Option<(u32, String)>,
@@ -95,11 +88,16 @@ pub struct AppState {
     pub needs_theme_update: bool,
     pub mic_passthrough: bool,
     pub pending_toggle_mic: bool,
+    pub pending_reconnect_mic: bool,
+    pub available_mic_sources: Vec<(String, String)>, // (name, description)
+    pub pending_refresh_mic_sources: bool,
+    pub color_edit_buffers: std::collections::HashMap<String, String>,
+    pub pending_stop_speaking: bool,
 }
 
-const DOCKER_CONTAINER_NAME: &str = "zundamon-voicevox";
+const DOCKER_CONTAINER_NAME: &str = "zundux-voicevox";
 
-pub struct ZundamonApp {
+pub struct ZunduxApp {
     state: AppState,
     audio_manager: AudioManager,
     ui_rx: mpsc::Receiver<UiMessage>,
@@ -108,10 +106,10 @@ pub struct ZundamonApp {
     is_docker: bool,
     last_health_check: Instant,
     pub is_playing: Arc<AtomicBool>,
+    tts_cancel: Arc<AtomicBool>,
     is_soundboard_playing: Arc<AtomicBool>,
     soundboard_pids: Arc<std::sync::Mutex<Vec<u32>>>,
     soundboard_cancel: Arc<AtomicBool>,
-    url_player: crate::media::url_player::UrlPlayer,
     desktop_capture: crate::media::desktop_capture::DesktopCapture,
     needs_theme_update: bool,
 }
@@ -119,7 +117,7 @@ pub struct ZundamonApp {
 const HEALTH_CHECK_INTERVAL_SECS: u64 = 5;
 const HEALTH_CHECK_INTERVAL_LAUNCHING_SECS: u64 = 1;
 
-impl ZundamonApp {
+impl ZunduxApp {
     pub fn new(config: AppConfig, tts_manager: TtsManager, rt: tokio::runtime::Handle) -> Self {
         let (ui_tx, ui_rx) = mpsc::channel::<UiMessage>();
         let (tts_tx, tts_rx) = mpsc::channel::<TtsCommand>();
@@ -131,6 +129,7 @@ impl ZundamonApp {
             audio_manager.ensure_device().is_ok() && audio_manager.device_exists().unwrap_or(false);
 
         crate::media::desktop_capture::DesktopCapture::cleanup_stale();
+        audio_manager.virtual_device.cleanup_stale_loopbacks();
 
         // Spawn the TTS command processing loop on tokio
         let voicevox_url = config.voicevox_url.clone();
@@ -169,13 +168,6 @@ impl ZundamonApp {
                 pending_soundboard_play: None,
                 pending_soundboard_stop: false,
                 is_soundboard_playing: false,
-                media_url: String::new(),
-                media_playing: false,
-                pending_media_play: None,
-                pending_media_stop: false,
-                media_deps_checked: false,
-                media_has_ytdlp: false,
-                media_has_ffmpeg: false,
                 sink_inputs: Vec::new(),
                 pending_refresh_sink_inputs: false,
                 pending_start_capture: None,
@@ -188,6 +180,11 @@ impl ZundamonApp {
                 needs_theme_update: false,
                 mic_passthrough: false,
                 pending_toggle_mic: false,
+                pending_reconnect_mic: false,
+                available_mic_sources: Vec::new(),
+                pending_refresh_mic_sources: true,
+                color_edit_buffers: std::collections::HashMap::new(),
+                pending_stop_speaking: false,
             },
             audio_manager,
             ui_rx,
@@ -196,10 +193,10 @@ impl ZundamonApp {
             is_docker: false,
             last_health_check: Instant::now(),
             is_playing: Arc::new(AtomicBool::new(false)),
+            tts_cancel: Arc::new(AtomicBool::new(false)),
             is_soundboard_playing: Arc::new(AtomicBool::new(false)),
             soundboard_pids: Arc::new(std::sync::Mutex::new(Vec::new())),
             soundboard_cancel: Arc::new(AtomicBool::new(false)),
-            url_player: crate::media::url_player::UrlPlayer::new(),
             desktop_capture: crate::media::desktop_capture::DesktopCapture::new(),
             needs_theme_update: true,
         }
@@ -309,14 +306,20 @@ impl ZundamonApp {
                     if self.is_playing.load(Ordering::SeqCst) {
                         tracing::warn!("Playback already in progress, dropping TTS audio");
                     } else {
+                        // Ensure sink is unmuted before playback
+                        let _ = std::process::Command::new("pactl")
+                            .args(["set-sink-mute", &self.state.config.virtual_device_name, "0"])
+                            .output();
                         let device_name = self.state.config.virtual_device_name.clone();
                         let monitor = self.state.config.monitor_audio;
                         let playing = self.is_playing.clone();
+                        let cancel = self.tts_cancel.clone();
+                        cancel.store(false, Ordering::SeqCst);
                         playing.store(true, Ordering::SeqCst);
                         std::thread::spawn(move || {
                             let _guard = PlaybackGuard(playing);
                             if let Err(e) =
-                                crate::audio::playback::play_wav(wav, &device_name, monitor)
+                                crate::audio::playback::play_wav(wav, &device_name, monitor, cancel)
                             {
                                 tracing::error!("Playback error: {}", e);
                             }
@@ -368,12 +371,32 @@ impl ZundamonApp {
     }
 
     fn process_actions(&mut self) {
+        // Handle stop speaking
+        if self.state.pending_stop_speaking {
+            self.state.pending_stop_speaking = false;
+            self.tts_cancel.store(true, Ordering::SeqCst);
+            // Clear is_playing immediately so new synthesis isn't blocked
+            self.is_playing.store(false, Ordering::SeqCst);
+            // Mute the virtual sink immediately — kills audio even if paplay buffers remain
+            let sink = &self.state.config.virtual_device_name;
+            let _ = std::process::Command::new("pactl")
+                .args(["set-sink-mute", sink, "1"])
+                .output();
+            tracing::info!("TTS stop: muted sink {}", sink);
+        }
+
         // Handle text send
         if let Some(text) = self.state.pending_send.take() {
-            let params = SynthParams::from_config(&self.state.config);
-            self.state.is_synthesizing = true;
-            self.state.last_error = None;
-            let _ = self.tts_tx.send(TtsCommand::Synthesize { text, params });
+            // Strip silent words before synthesis
+            let text = Self::strip_silent_words(&text, &self.state.config.silent_words);
+            if text.is_empty() {
+                // Nothing left to speak after stripping
+            } else {
+                let params = SynthParams::from_config(&self.state.config);
+                self.state.is_synthesizing = true;
+                self.state.last_error = None;
+                let _ = self.tts_tx.send(TtsCommand::Synthesize { text, params });
+            }
         }
 
         // Handle health check
@@ -458,24 +481,93 @@ impl ZundamonApp {
             self.state.soundboard_files = files;
         }
 
+        if self.state.pending_refresh_mic_sources {
+            self.state.pending_refresh_mic_sources = false;
+            match crate::audio::virtual_device::VirtualDevice::list_sources() {
+                Ok(sources) => {
+                    // Auto-select first source if none configured
+                    if self.state.config.mic_source_name.is_none() {
+                        if let Some((name, _)) = sources.first() {
+                            self.state.config.mic_source_name = Some(name.clone());
+                        }
+                    }
+                    self.state.available_mic_sources = sources;
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to list mic sources: {}", e);
+                }
+            }
+        }
+
         if self.state.pending_toggle_mic {
             self.state.pending_toggle_mic = false;
-            let result = if self.audio_manager.virtual_device.is_mic_passthrough() {
+            let was_on = self.audio_manager.virtual_device.is_mic_passthrough();
+            tracing::info!("Mic toggle requested: currently {}", if was_on { "ON" } else { "OFF" });
+            let result = if was_on {
                 self.audio_manager
                     .virtual_device
                     .disable_mic_passthrough()
             } else {
+                let source = self
+                    .state
+                    .config
+                    .mic_source_name
+                    .as_deref()
+                    .unwrap_or("@DEFAULT_SOURCE@");
+                tracing::info!("Enabling mic passthrough with source: {}", source);
+                // Ensure sink is unmuted (STOP may have muted it)
+                let _ = std::process::Command::new("pactl")
+                    .args(["set-sink-mute", &self.state.config.virtual_device_name, "0"])
+                    .output();
                 self.audio_manager
                     .virtual_device
-                    .enable_mic_passthrough()
+                    .enable_mic_passthrough(source)
             };
             match result {
                 Ok(()) => {
                     self.state.mic_passthrough =
                         self.audio_manager.virtual_device.is_mic_passthrough();
+                    tracing::info!("Mic passthrough is now: {}", self.state.mic_passthrough);
+                    // Restart capture with updated speaker routing to prevent acoustic feedback
+                    if self.state.is_capturing {
+                        let virtual_sink = self.state.config.virtual_device_name.clone();
+                        if let Err(e) = self.desktop_capture.restart_capture(
+                            &virtual_sink,
+                            self.state.mic_passthrough,
+                        ) {
+                            tracing::warn!("Failed to restart capture after mic toggle: {}", e);
+                        }
+                    }
                 }
                 Err(e) => {
                     self.state.last_error = Some(format!("マイク切替失敗: {}", e));
+                }
+            }
+        }
+
+        // Reconnect mic loopback with newly selected source
+        if self.state.pending_reconnect_mic {
+            self.state.pending_reconnect_mic = false;
+            let source = self
+                .state
+                .config
+                .mic_source_name
+                .as_deref()
+                .unwrap_or("@DEFAULT_SOURCE@");
+            tracing::info!("Reconnecting mic loopback with source: {}", source);
+            let _ = self.audio_manager.virtual_device.disable_mic_passthrough();
+            match self
+                .audio_manager
+                .virtual_device
+                .enable_mic_passthrough(source)
+            {
+                Ok(()) => {
+                    self.state.mic_passthrough =
+                        self.audio_manager.virtual_device.is_mic_passthrough();
+                }
+                Err(e) => {
+                    self.state.last_error = Some(format!("マイク再接続失敗: {}", e));
+                    self.state.mic_passthrough = false;
                 }
             }
         }
@@ -518,46 +610,6 @@ impl ZundamonApp {
             });
         }
 
-        // Check media dependencies
-        if !self.state.media_deps_checked {
-            self.state.media_deps_checked = true;
-            let (ytdlp, ffmpeg) = crate::media::url_player::UrlPlayer::check_dependencies();
-            self.state.media_has_ytdlp = ytdlp;
-            self.state.media_has_ffmpeg = ffmpeg;
-        }
-
-        // Poll media process for natural completion
-        if self.state.media_playing && self.url_player.poll_finished() {
-            self.state.media_playing = false;
-            self.is_playing.store(false, Ordering::SeqCst);
-        }
-
-        // Media URL playback
-        if let Some(url) = self.state.pending_media_play.take() {
-            if self.is_playing.load(Ordering::SeqCst) {
-                self.state.last_error = Some("再生中です...".to_string());
-            } else {
-                let device_name = &self.state.config.virtual_device_name;
-                match self.url_player.play(&url, device_name) {
-                    Ok(()) => {
-                        self.state.media_playing = true;
-                        self.is_playing.store(true, Ordering::SeqCst);
-                        self.state.last_error = None;
-                    }
-                    Err(e) => {
-                        self.state.last_error = Some(format!("メディア再生失敗: {}", e));
-                    }
-                }
-            }
-        }
-
-        if self.state.pending_media_stop {
-            self.state.pending_media_stop = false;
-            self.url_player.stop();
-            self.state.media_playing = false;
-            self.is_playing.store(false, Ordering::SeqCst);
-        }
-
         if self.state.pending_refresh_sink_inputs {
             self.state.pending_refresh_sink_inputs = false;
             match crate::media::desktop_capture::DesktopCapture::list_sink_inputs() {
@@ -568,9 +620,10 @@ impl ZundamonApp {
 
         if let Some((input_id, original_sink)) = self.state.pending_start_capture.take() {
             let virtual_sink = &self.state.config.virtual_device_name;
+            let skip_speaker = self.state.mic_passthrough;
             match self
                 .desktop_capture
-                .start_capture(input_id, &original_sink, virtual_sink)
+                .start_capture(input_id, &original_sink, virtual_sink, skip_speaker)
             {
                 Ok(()) => {
                     self.state.is_capturing = true;
@@ -589,17 +642,26 @@ impl ZundamonApp {
         }
     }
 
+    /// Remove words marked as silent from text before synthesis.
+    fn strip_silent_words(text: &str, silent_words: &[String]) -> String {
+        let mut result = text.to_string();
+        for word in silent_words {
+            result = result.replace(word.as_str(), "");
+        }
+        result.trim().to_string()
+    }
+
     fn is_voicevox_docker_running() -> bool {
         std::process::Command::new("docker")
             .args([
                 "ps",
                 "--filter",
-                "name=zundamon-voicevox",
+                "name=zundux-voicevox",
                 "--format",
                 "{{.Names}}",
             ])
             .output()
-            .map(|o| String::from_utf8_lossy(&o.stdout).contains("zundamon-voicevox"))
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("zundux-voicevox"))
             .unwrap_or(false)
     }
 
@@ -611,14 +673,6 @@ impl ZundamonApp {
     fn cleanup_docker_container() {
         let _ = Command::new("docker")
             .args(["rm", "-f", DOCKER_CONTAINER_NAME])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status();
-    }
-
-    fn stop_docker_container() {
-        let _ = Command::new("docker")
-            .args(["stop", DOCKER_CONTAINER_NAME])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status();
@@ -793,9 +847,8 @@ impl ZundamonApp {
     }
 }
 
-impl Drop for ZundamonApp {
+impl Drop for ZunduxApp {
     fn drop(&mut self) {
-        self.url_player.stop();
         self.desktop_capture.stop_capture();
         if self.is_docker {
             // Graceful: try stop first (sends SIGTERM to container)
@@ -820,7 +873,7 @@ impl Drop for ZundamonApp {
     }
 }
 
-impl eframe::App for ZundamonApp {
+impl eframe::App for ZunduxApp {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
         // Transparent clear color for the window
         [0.0, 0.0, 0.0, 0.0]
@@ -884,7 +937,6 @@ impl eframe::App for ZundamonApp {
                     for (screen, label) in [
                         (Screen::Input, "Input"),
                         (Screen::Soundboard, "Soundboard"),
-                        (Screen::Media, "Media"),
                         (Screen::Settings, "Settings"),
                     ] {
                         let is_active = self.state.current_screen == screen;
@@ -946,6 +998,26 @@ impl eframe::App for ZundamonApp {
                             self.state.error_display_time = None;
                         }
                     }
+
+                    // Resize handle at bottom-right corner
+                    let available = ui.available_size();
+                    ui.add_space(available.x - 16.0);
+                    let (rect, response) = ui.allocate_exact_size(
+                        egui::vec2(16.0, 16.0),
+                        egui::Sense::drag(),
+                    );
+                    ui.painter().text(
+                        rect.center(),
+                        egui::Align2::CENTER_CENTER,
+                        "\u{2921}",
+                        egui::FontId::proportional(12.0),
+                        theme.color(theme.text_muted),
+                    );
+                    if response.drag_started() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::BeginResize(
+                            egui::ResizeDirection::SouthEast,
+                        ));
+                    }
                 });
             });
 
@@ -958,11 +1030,14 @@ impl eframe::App for ZundamonApp {
         }
 
         egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(egui::Color32::TRANSPARENT))
+            .frame(
+                egui::Frame::NONE
+                    .fill(egui::Color32::TRANSPARENT)
+                    .inner_margin(egui::Margin::symmetric(12, 0)),
+            )
             .show(ctx, |ui| match self.state.current_screen {
                 Screen::Input => crate::ui::input::show(ui, &mut self.state),
                 Screen::Soundboard => crate::ui::soundboard::show(ui, &mut self.state),
-                Screen::Media => crate::ui::media::show(ui, &mut self.state),
                 Screen::Settings => crate::ui::settings::show(ui, &mut self.state),
             });
 
@@ -977,7 +1052,7 @@ mod tests {
 
     #[test]
     fn rejects_shell_metacharacters_in_docker_cmd() {
-        let result = ZundamonApp::launch_docker_voicevox(
+        let result = ZunduxApp::launch_docker_voicevox(
             "docker run evil;rm -rf /",
             "http://127.0.0.1:50021",
         );
@@ -987,7 +1062,7 @@ mod tests {
 
     #[test]
     fn rejects_shell_metacharacters_in_local_cmd() {
-        let result = ZundamonApp::launch_local_voicevox("voicevox && rm -rf /");
+        let result = ZunduxApp::launch_local_voicevox("voicevox && rm -rf /");
         assert!(result.is_err());
     }
 }

@@ -23,10 +23,6 @@ impl DesktopCapture {
         }
     }
 
-    pub fn is_capturing(&self) -> bool {
-        self.combined_module_id.is_some()
-    }
-
     pub fn list_sink_inputs() -> Result<Vec<SinkInput>> {
         let output = Command::new("pactl")
             .args(["list", "sink-inputs"])
@@ -43,7 +39,9 @@ impl DesktopCapture {
             let trimmed = line.trim();
             if let Some(rest) = trimmed.strip_prefix("Sink Input #") {
                 if let Some(id) = current_id {
-                    if !current_name.is_empty() {
+                    if !current_name.is_empty()
+                        && crate::validation::is_valid_pa_name(&current_sink)
+                    {
                         inputs.push(SinkInput {
                             id,
                             name: current_name.clone(),
@@ -68,7 +66,7 @@ impl DesktopCapture {
             }
         }
         if let Some(id) = current_id {
-            if !current_name.is_empty() {
+            if !current_name.is_empty() && crate::validation::is_valid_pa_name(&current_sink) {
                 inputs.push(SinkInput {
                     id,
                     name: current_name,
@@ -85,17 +83,24 @@ impl DesktopCapture {
         sink_input_id: u32,
         original_sink: &str,
         virtual_sink: &str,
+        skip_speaker: bool,
     ) -> Result<()> {
         self.stop_capture();
 
-        let default_sink = Self::get_default_sink()?;
+        let slaves = if skip_speaker {
+            tracing::info!("Capture: speaker output skipped (mic passthrough active)");
+            virtual_sink.to_string()
+        } else {
+            let default_sink = Self::get_default_sink()?;
+            format!("{},{}", virtual_sink, default_sink)
+        };
 
         let output = Command::new("pactl")
             .args([
                 "load-module",
                 "module-combine-sink",
-                "sink_name=ZundamonCombined",
-                &format!("slaves={},{}", virtual_sink, default_sink),
+                "sink_name=ZunduxCombined",
+                &format!("slaves={}", slaves),
             ])
             .output()
             .context("Failed to create combine-sink")?;
@@ -114,7 +119,7 @@ impl DesktopCapture {
             .args([
                 "move-sink-input",
                 &sink_input_id.to_string(),
-                "ZundamonCombined",
+                "ZunduxCombined",
             ])
             .output()
             .context("Failed to move sink-input")?;
@@ -132,10 +137,24 @@ impl DesktopCapture {
         self.original_sink = Some(original_sink.to_string());
 
         tracing::info!(
-            "Started desktop capture: sink-input {} → ZundamonCombined",
-            sink_input_id
+            "Started desktop capture: sink-input {} → ZunduxCombined (skip_speaker={})",
+            sink_input_id,
+            skip_speaker
         );
         Ok(())
+    }
+
+    /// Restart capture with updated speaker routing (e.g. when mic toggle changes).
+    pub fn restart_capture(&mut self, virtual_sink: &str, skip_speaker: bool) -> Result<()> {
+        let input_id = match self.captured_input_id {
+            Some(id) => id,
+            None => return Ok(()),
+        };
+        let original_sink = match self.original_sink.clone() {
+            Some(s) => s,
+            None => return Ok(()),
+        };
+        self.start_capture(input_id, &original_sink, virtual_sink, skip_speaker)
     }
 
     pub fn stop_capture(&mut self) {
@@ -168,12 +187,12 @@ impl DesktopCapture {
         if let Ok(output) = output {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
-                if line.contains("module-combine-sink") && line.contains("ZundamonCombined") {
+                if line.contains("module-combine-sink") && line.contains("ZunduxCombined") {
                     if let Some(id_str) = line.split_whitespace().next() {
                         let _ = Command::new("pactl")
                             .args(["unload-module", id_str])
                             .output();
-                        tracing::info!("Cleaned up stale ZundamonCombined module {}", id_str);
+                        tracing::info!("Cleaned up stale ZunduxCombined module {}", id_str);
                     }
                 }
             }

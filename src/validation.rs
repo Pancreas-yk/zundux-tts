@@ -1,7 +1,7 @@
 use anyhow::{bail, Context, Result};
 
 const MAX_DEVICE_NAME_LEN: usize = 64;
-pub const DEFAULT_DEVICE_NAME: &str = "ZundamonVRC";
+pub const DEFAULT_DEVICE_NAME: &str = "ZunduxMic";
 pub const MAX_CONFIG_FILE_SIZE: u64 = 1_048_576; // 1 MB
 
 /// Validate PulseAudio device name: `[a-zA-Z0-9_-]+`, max 64 chars.
@@ -13,14 +13,6 @@ pub fn is_valid_device_name(name: &str) -> bool {
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-}
-
-pub fn sanitize_device_name(name: &str) -> &str {
-    if is_valid_device_name(name) {
-        name
-    } else {
-        DEFAULT_DEVICE_NAME
-    }
 }
 
 pub const DEFAULT_VOICEVOX_URL: &str = "http://127.0.0.1:50021";
@@ -39,6 +31,18 @@ pub fn is_valid_voicevox_url(url_str: &str) -> Result<()> {
         Some(host) => bail!("VOICEVOX URL must point to localhost, got: {}", host),
         None => bail!("VOICEVOX URL has no host"),
     }
+}
+
+/// Validate PulseAudio source/sink name from pactl output.
+/// Allows `[a-zA-Z0-9_.@:-]+`, max 256 chars.
+/// More permissive than `is_valid_device_name` because PA names contain dots, colons, etc.
+#[must_use]
+pub fn is_valid_pa_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 256
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':' | '@'))
 }
 
 pub fn check_config_file_size(path: &std::path::Path) -> Result<()> {

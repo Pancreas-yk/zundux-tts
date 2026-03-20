@@ -54,11 +54,17 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
     input_frame.show(ui, |ui| {
         let response = ui.add(
             egui::TextEdit::multiline(&mut state.input_text)
+                .id(egui::Id::new("main_text_input"))
                 .desired_rows(3)
                 .desired_width(f32::INFINITY)
                 .hint_text("テキストを入力してEnterで送信 (Shift+Enterで改行)")
                 .frame(false),
         );
+
+        // Auto-focus on the text input when the Input screen is active
+        if !response.has_focus() && !response.lost_focus() {
+            ui.memory_mut(|mem| mem.request_focus(egui::Id::new("main_text_input")));
+        }
 
         if response.has_focus() {
             let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -95,6 +101,23 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
         });
         if mic_btn.clicked() {
             state.pending_toggle_mic = true;
+        }
+
+        // Stop speaking button (visible when playing or synthesizing)
+        if state.is_playing || state.is_synthesizing {
+            let stop_btn = ui.add(
+                egui::Button::new(
+                    egui::RichText::new("STOP")
+                        .size(10.0)
+                        .color(theme.color(theme.status_error)),
+                )
+                .corner_radius(CornerRadius::same(theme.chip_rounding as u8))
+                .fill(theme.color(theme.chip_background)),
+            );
+            stop_btn.clone().on_hover_text("発話を停止する");
+            if stop_btn.clicked() {
+                state.pending_stop_speaking = true;
+            }
         }
 
         if state.is_synthesizing {
