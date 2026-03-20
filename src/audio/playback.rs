@@ -63,6 +63,124 @@ fn play_with_rodio(wav_data: &[u8], device_name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Play an audio file (WAV/MP3/OGG) through a PulseAudio device using ffmpeg+paplay.
+/// Unlike play_wav, this handles arbitrary formats and sample rates.
+/// `pids` is used to store child process IDs so they can be killed externally for stop.
+/// `cancel` is checked by the monitor thread to stop monitor playback.
+pub fn play_file(
+    path: &std::path::Path,
+    device_name: &str,
+    monitor: bool,
+    pids: std::sync::Arc<std::sync::Mutex<Vec<u32>>>,
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> Result<()> {
+    if monitor {
+        let path_clone = path.to_path_buf();
+        let cancel_clone = cancel.clone();
+        std::thread::spawn(move || {
+            if let Err(e) = play_file_default_output(&path_clone, &cancel_clone) {
+                // Don't log if cancelled intentionally
+                if !cancel_clone.load(std::sync::atomic::Ordering::SeqCst) {
+                    tracing::warn!("Monitor playback failed: {}", e);
+                }
+            }
+        });
+    }
+
+    // Use ffmpeg to decode any format → raw PCM, then pipe to paplay
+    let mut ffmpeg = Command::new("ffmpeg")
+        .args(["-i"])
+        .arg(path)
+        .args([
+            "-f", "s16le",
+            "-acodec", "pcm_s16le",
+            "-ac", "1",
+            "-ar", "48000",
+            "-loglevel", "error",
+            "pipe:1",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .context("Failed to spawn ffmpeg — is ffmpeg installed?")?;
+
+    let ffmpeg_stdout = ffmpeg.stdout.take().context("Failed to get ffmpeg stdout")?;
+
+    let mut paplay = Command::new("paplay")
+        .args([
+            "--device", device_name,
+            "--raw",
+            "--format=s16le",
+            "--rate=48000",
+            "--channels=1",
+        ])
+        .stdin(ffmpeg_stdout)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .context("Failed to spawn paplay")?;
+
+    // Store PIDs so external code can kill them to stop playback
+    {
+        let mut pid_list = pids.lock().unwrap();
+        pid_list.push(ffmpeg.id());
+        pid_list.push(paplay.id());
+    }
+
+    let paplay_status = paplay.wait().context("Failed to wait for paplay")?;
+    let _ = ffmpeg.wait();
+
+    // Clear PIDs after completion
+    {
+        let mut pid_list = pids.lock().unwrap();
+        pid_list.clear();
+    }
+
+    if !paplay_status.success() {
+        // Don't report error if killed by signal (SIGTERM/SIGKILL = stopped by user)
+        if let Some(code) = paplay_status.code() {
+            anyhow::bail!("paplay exited with status {}", code);
+        }
+    }
+    Ok(())
+}
+
+/// Kill active soundboard playback processes and cancel monitor.
+pub fn stop_file_playback(
+    pids: &std::sync::Arc<std::sync::Mutex<Vec<u32>>>,
+    cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    cancel.store(true, std::sync::atomic::Ordering::SeqCst);
+    let pid_list = pids.lock().unwrap();
+    for &pid in pid_list.iter() {
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
+        }
+    }
+}
+
+fn play_file_default_output(
+    path: &std::path::Path,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<()> {
+    let (_stream, handle) =
+        OutputStream::try_default().context("Failed to open default output")?;
+    let sink = Sink::try_new(&handle).context("Failed to create sink")?;
+    let file = std::fs::File::open(path).context("Failed to open audio file")?;
+    let source = rodio::Decoder::new(std::io::BufReader::new(file))
+        .context("Failed to decode audio file")?;
+    sink.append(source);
+    // Poll instead of sleep_until_end so we can respond to cancel
+    while !sink.empty() {
+        if cancel.load(std::sync::atomic::Ordering::SeqCst) {
+            sink.stop();
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    Ok(())
+}
+
 fn play_with_paplay(wav_data: &[u8], device_name: &str) -> Result<()> {
     use std::io::Write;
     use std::process::Stdio;

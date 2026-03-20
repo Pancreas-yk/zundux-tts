@@ -1,6 +1,6 @@
 use crate::app::AppState;
 use crate::ui::theme::Theme;
-use egui::{CornerRadius, Vec2};
+use egui::CornerRadius;
 
 const TEMPLATE_MAX_DISPLAY_LEN: usize = 12;
 const TEMPLATE_MAX_VISIBLE_ROWS: usize = 2;
@@ -72,14 +72,39 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
 
     ui.add_space(theme.spacing_small);
 
-    // -- Status hint --
-    if state.is_synthesizing {
-        ui.label(
-            egui::RichText::new("合成中...")
-                .size(10.0)
-                .color(theme.color(theme.accent)),
+    // -- Mic toggle + status --
+    ui.horizontal(|ui| {
+        let (mic_label, mic_color) = if state.mic_passthrough {
+            ("MIC: ON", theme.color(theme.status_ok))
+        } else {
+            ("MIC: OFF", theme.color(theme.text_muted))
+        };
+        let mic_btn = ui.add(
+            egui::Button::new(
+                egui::RichText::new(mic_label)
+                    .size(10.0)
+                    .color(mic_color),
+            )
+            .corner_radius(CornerRadius::same(theme.chip_rounding as u8))
+            .fill(theme.color(theme.chip_background)),
         );
-    }
+        mic_btn.clone().on_hover_text(if state.mic_passthrough {
+            "クリックでずんだもんモードに戻る"
+        } else {
+            "クリックで自分のマイクに切り替え"
+        });
+        if mic_btn.clicked() {
+            state.pending_toggle_mic = true;
+        }
+
+        if state.is_synthesizing {
+            ui.label(
+                egui::RichText::new("合成中...")
+                    .size(10.0)
+                    .color(theme.color(theme.accent)),
+            );
+        }
+    });
 
     ui.add_space(theme.spacing_small);
 
@@ -138,8 +163,8 @@ fn show_template_chips(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
             }
 
             if btn.clicked() {
-                state.input_text = template.clone();
-                state.pending_send = Some(state.input_text.trim().to_string());
+                state.pending_send = Some(template.trim().to_string());
+                state.input_text.clear();
             }
         }
 

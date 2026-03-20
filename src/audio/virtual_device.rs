@@ -5,6 +5,7 @@ pub struct VirtualDevice {
     pub(crate) sink_name: String,
     sink_module_id: Option<u32>,
     source_module_id: Option<u32>,
+    loopback_module_id: Option<u32>,
 }
 
 impl VirtualDevice {
@@ -13,6 +14,7 @@ impl VirtualDevice {
             sink_name: sink_name.to_string(),
             sink_module_id: None,
             source_module_id: None,
+            loopback_module_id: None,
         }
     }
 
@@ -79,6 +81,14 @@ impl VirtualDevice {
             tracing::info!("Virtual sink {} already exists", self.sink_name);
         }
 
+        // Ensure sink is unmuted and at full volume (PipeWire may default to muted)
+        let _ = Command::new("pactl")
+            .args(["set-sink-mute", &self.sink_name, "0"])
+            .output();
+        let _ = Command::new("pactl")
+            .args(["set-sink-volume", &self.sink_name, "100%"])
+            .output();
+
         // Step 2: Create a virtual source that wraps the sink's monitor.
         // This exposes a proper input device (microphone) that apps like VRChat can detect.
         if !self.virtual_source_exists()? {
@@ -121,7 +131,60 @@ impl VirtualDevice {
         Ok(())
     }
 
+    /// Whether the real microphone is currently being passed through to the virtual sink.
+    pub fn is_mic_passthrough(&self) -> bool {
+        self.loopback_module_id.is_some()
+    }
+
+    /// Enable real microphone passthrough: routes the default PulseAudio source
+    /// into the virtual sink so VRChat hears the real mic instead of TTS.
+    pub fn enable_mic_passthrough(&mut self) -> Result<()> {
+        if self.loopback_module_id.is_some() {
+            return Ok(()); // Already enabled
+        }
+
+        let output = Command::new("pactl")
+            .args([
+                "load-module",
+                "module-loopback",
+                "source=@DEFAULT_SOURCE@",
+                &format!("sink={}", self.sink_name),
+                "latency_msec=30",
+            ])
+            .output()
+            .context("Failed to create mic loopback")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            anyhow::bail!("module-loopback failed: {}", stderr.trim());
+        }
+
+        let id_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        self.loopback_module_id = id_str.parse().ok();
+        tracing::info!("Mic passthrough enabled (module {})", id_str);
+        Ok(())
+    }
+
+    /// Disable real microphone passthrough.
+    pub fn disable_mic_passthrough(&mut self) -> Result<()> {
+        if let Some(id) = self.loopback_module_id.take() {
+            let output = Command::new("pactl")
+                .args(["unload-module", &id.to_string()])
+                .output()
+                .context("Failed to unload loopback module")?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::warn!("Failed to unload loopback module {}: {}", id, stderr);
+            } else {
+                tracing::info!("Mic passthrough disabled (module {})", id);
+            }
+        }
+        Ok(())
+    }
+
     pub fn destroy(&mut self) -> Result<()> {
+        // Destroy loopback first
+        let _ = self.disable_mic_passthrough();
         // Destroy virtual source first, then the sink
         if let Some(id) = self.source_module_id.take() {
             let output = Command::new("pactl")

@@ -74,6 +74,8 @@ pub struct AppState {
     pub soundboard_files: Vec<(String, std::path::PathBuf)>,
     pub pending_soundboard_scan: bool,
     pub pending_soundboard_play: Option<std::path::PathBuf>,
+    pub pending_soundboard_stop: bool,
+    pub is_soundboard_playing: bool,
     pub media_url: String,
     pub media_playing: bool,
     pub pending_media_play: Option<String>,
@@ -91,6 +93,8 @@ pub struct AppState {
     pub templates_expanded: bool,
     pub adding_template: bool,
     pub needs_theme_update: bool,
+    pub mic_passthrough: bool,
+    pub pending_toggle_mic: bool,
 }
 
 const DOCKER_CONTAINER_NAME: &str = "zundamon-voicevox";
@@ -104,6 +108,9 @@ pub struct ZundamonApp {
     is_docker: bool,
     last_health_check: Instant,
     pub is_playing: Arc<AtomicBool>,
+    is_soundboard_playing: Arc<AtomicBool>,
+    soundboard_pids: Arc<std::sync::Mutex<Vec<u32>>>,
+    soundboard_cancel: Arc<AtomicBool>,
     url_player: crate::media::url_player::UrlPlayer,
     desktop_capture: crate::media::desktop_capture::DesktopCapture,
     needs_theme_update: bool,
@@ -160,6 +167,8 @@ impl ZundamonApp {
                 soundboard_files: Vec::new(),
                 pending_soundboard_scan: true,
                 pending_soundboard_play: None,
+                pending_soundboard_stop: false,
+                is_soundboard_playing: false,
                 media_url: String::new(),
                 media_playing: false,
                 pending_media_play: None,
@@ -177,6 +186,8 @@ impl ZundamonApp {
                 templates_expanded: false,
                 adding_template: false,
                 needs_theme_update: false,
+                mic_passthrough: false,
+                pending_toggle_mic: false,
             },
             audio_manager,
             ui_rx,
@@ -185,6 +196,9 @@ impl ZundamonApp {
             is_docker: false,
             last_health_check: Instant::now(),
             is_playing: Arc::new(AtomicBool::new(false)),
+            is_soundboard_playing: Arc::new(AtomicBool::new(false)),
+            soundboard_pids: Arc::new(std::sync::Mutex::new(Vec::new())),
+            soundboard_cancel: Arc::new(AtomicBool::new(false)),
             url_player: crate::media::url_player::UrlPlayer::new(),
             desktop_capture: crate::media::desktop_capture::DesktopCapture::new(),
             needs_theme_update: true,
@@ -444,28 +458,64 @@ impl ZundamonApp {
             self.state.soundboard_files = files;
         }
 
-        if let Some(file_path) = self.state.pending_soundboard_play.take() {
-            if self.is_playing.load(Ordering::SeqCst) {
-                self.state.last_error = Some("再生中です...".to_string());
+        if self.state.pending_toggle_mic {
+            self.state.pending_toggle_mic = false;
+            let result = if self.audio_manager.virtual_device.is_mic_passthrough() {
+                self.audio_manager
+                    .virtual_device
+                    .disable_mic_passthrough()
             } else {
-                let device_name = self.state.config.virtual_device_name.clone();
-                let monitor = self.state.config.monitor_audio;
-                let playing = self.is_playing.clone();
-                playing.store(true, Ordering::SeqCst);
-                std::thread::spawn(move || {
-                    let _guard = PlaybackGuard(playing);
-                    match std::fs::read(&file_path) {
-                        Ok(data) => {
-                            if let Err(e) =
-                                crate::audio::playback::play_wav(data, &device_name, monitor)
-                            {
-                                tracing::error!("Soundboard playback error: {}", e);
-                            }
-                        }
-                        Err(e) => tracing::error!("Failed to read soundboard file: {}", e),
-                    }
-                });
+                self.audio_manager
+                    .virtual_device
+                    .enable_mic_passthrough()
+            };
+            match result {
+                Ok(()) => {
+                    self.state.mic_passthrough =
+                        self.audio_manager.virtual_device.is_mic_passthrough();
+                }
+                Err(e) => {
+                    self.state.last_error = Some(format!("マイク切替失敗: {}", e));
+                }
             }
+        }
+
+        if self.state.pending_soundboard_stop {
+            self.state.pending_soundboard_stop = false;
+            crate::audio::playback::stop_file_playback(
+                &self.soundboard_pids,
+                &self.soundboard_cancel,
+            );
+        }
+
+        if let Some(file_path) = self.state.pending_soundboard_play.take() {
+            if self.is_soundboard_playing.load(Ordering::SeqCst) {
+                // Stop current playback and start new one
+                crate::audio::playback::stop_file_playback(
+                    &self.soundboard_pids,
+                    &self.soundboard_cancel,
+                );
+            }
+            // Reset cancel signal for new playback
+            self.soundboard_cancel.store(false, Ordering::SeqCst);
+            let device_name = self.state.config.virtual_device_name.clone();
+            let monitor = self.state.config.monitor_audio;
+            let playing = self.is_soundboard_playing.clone();
+            let pids = self.soundboard_pids.clone();
+            let cancel = self.soundboard_cancel.clone();
+            playing.store(true, Ordering::SeqCst);
+            std::thread::spawn(move || {
+                let _guard = PlaybackGuard(playing);
+                if let Err(e) = crate::audio::playback::play_file(
+                    &file_path,
+                    &device_name,
+                    monitor,
+                    pids,
+                    cancel,
+                ) {
+                    tracing::error!("Soundboard playback error: {}", e);
+                }
+            });
         }
 
         // Check media dependencies
@@ -779,6 +829,7 @@ impl eframe::App for ZundamonApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.process_messages();
         self.state.is_playing = self.is_playing.load(Ordering::SeqCst);
+        self.state.is_soundboard_playing = self.is_soundboard_playing.load(Ordering::SeqCst);
         self.periodic_health_check();
         self.process_actions();
 
