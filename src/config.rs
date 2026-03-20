@@ -55,7 +55,7 @@ impl Default for AppConfig {
     fn default() -> Self {
         Self {
             voicevox_url: validation::DEFAULT_VOICEVOX_URL.to_string(),
-            voicevox_path: "docker run --rm --gpus all -p 50021:50021 voicevox/voicevox_engine:nvidia-ubuntu20.04-latest".to_string(),
+            voicevox_path: String::new(),
             auto_launch_voicevox: false,
             auto_start_app: false,
             synth_params: SynthParamsConfig::default(),

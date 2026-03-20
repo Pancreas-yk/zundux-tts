@@ -670,6 +670,25 @@ impl ZunduxApp {
         trimmed.starts_with("docker ") || trimmed.starts_with("docker run")
     }
 
+    /// Check if a stopped container with our name exists and can be restarted.
+    fn has_stopped_docker_container() -> bool {
+        Command::new("docker")
+            .args([
+                "ps",
+                "-a",
+                "--filter",
+                &format!("name={}", DOCKER_CONTAINER_NAME),
+                "--filter",
+                "status=exited",
+                "--format",
+                "{{.Names}}",
+            ])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains(DOCKER_CONTAINER_NAME))
+            .unwrap_or(false)
+    }
+
+    #[allow(dead_code)]
     fn cleanup_docker_container() {
         let _ = Command::new("docker")
             .args(["rm", "-f", DOCKER_CONTAINER_NAME])
@@ -707,9 +726,28 @@ impl ZunduxApp {
             }
         }
 
-        // Clean up any stale container first
-        if is_docker {
-            Self::cleanup_docker_container();
+        // If a stopped container exists, restart it instead of creating a new one
+        if is_docker && Self::has_stopped_docker_container() {
+            tracing::info!("Restarting stopped VOICEVOX container");
+            let result = Command::new("docker")
+                .args(["start", DOCKER_CONTAINER_NAME])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn();
+            match result {
+                Ok(child) => {
+                    self.voicevox_process = Some(child);
+                    self.is_docker = true;
+                    self.state.last_error = None;
+                    self.state.voicevox_launching = true;
+                    tracing::info!("VOICEVOX container restarted");
+                }
+                Err(e) => {
+                    tracing::error!("Failed to restart VOICEVOX container: {}", e);
+                    self.state.last_error = Some(format!("VOICEVOX再起動失敗: {}", e));
+                }
+            }
+            return;
         }
 
         tracing::info!("Launching VOICEVOX: {}", path);
