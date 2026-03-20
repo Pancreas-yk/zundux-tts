@@ -15,4 +15,7 @@ else
     exit 1
 fi
 
+# Force X11 backend for IME (Japanese input) support on Wayland
+export WINIT_UNIX_BACKEND=x11
+
 exec "$BINARY"
