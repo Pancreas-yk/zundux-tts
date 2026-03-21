@@ -104,8 +104,9 @@ pub fn play_file(
     if monitor {
         let path_clone = path.to_path_buf();
         let cancel_clone = cancel.clone();
+        let monitor_gain_db = gain_db;
         std::thread::spawn(move || {
-            if let Err(e) = play_file_default_output(&path_clone, &cancel_clone) {
+            if let Err(e) = play_file_default_output(&path_clone, &cancel_clone, monitor_gain_db) {
                 // Don't log if cancelled intentionally
                 if !cancel_clone.load(std::sync::atomic::Ordering::SeqCst) {
                     tracing::warn!("Monitor playback failed: {}", e);
@@ -205,9 +206,15 @@ pub fn stop_file_playback(
 fn play_file_default_output(
     path: &std::path::Path,
     cancel: &std::sync::atomic::AtomicBool,
+    gain_db: Option<f64>,
 ) -> Result<()> {
     let (_stream, handle) = OutputStream::try_default().context("Failed to open default output")?;
     let sink = Sink::try_new(&handle).context("Failed to create sink")?;
+    if let Some(db) = gain_db {
+        // Convert dB to linear volume factor: 10^(dB/20)
+        let linear = 10.0_f64.powf(db / 20.0) as f32;
+        sink.set_volume(linear);
+    }
     let file = std::fs::File::open(path).context("Failed to open audio file")?;
     let source = rodio::Decoder::new(std::io::BufReader::new(file))
         .context("Failed to decode audio file")?;
