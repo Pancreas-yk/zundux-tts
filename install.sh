@@ -18,7 +18,7 @@ INSTALL_BIN="$HOME/.local/bin"
 INSTALL_APPS="$HOME/.local/share/applications"
 INSTALL_ICONS="$HOME/.local/share/icons/hicolor/256x256/apps"
 CONFIG_DIR="$HOME/.config/zundux_tts"
-GITHUB_REPO="ediblepancreas/zundux_tts"
+GITHUB_REPO="Pancreas-yk/zundux-tts"
 
 download_binary() {
     info "最新リリースをダウンロード中..."
