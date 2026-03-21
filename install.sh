@@ -187,6 +187,18 @@ DOCKER_CMD="docker run --rm ${GPU_FLAGS:+$GPU_FLAGS }-p 50021:50021 $VOICEVOX_IM
 cat > "$INSTALL_BIN/zundux_tts_launch.sh" << 'LAUNCHER_EOF'
 #!/usr/bin/env bash
 VOICEVOX_CONTAINER="zundux-voicevox"
+
+# Force X11 backend for IME (Japanese input) support on Wayland
+export WINIT_UNIX_BACKEND=x11
+
+# Set XMODIFIERS if not already set (detect running IME)
+if [ -z "${XMODIFIERS:-}" ]; then
+    if pgrep -x fcitx5 >/dev/null 2>&1 || pgrep -x fcitx >/dev/null 2>&1; then
+        export XMODIFIERS=@im=fcitx
+    elif pgrep -x ibus-daemon >/dev/null 2>&1; then
+        export XMODIFIERS=@im=ibus
+    fi
+fi
 LAUNCHER_EOF
 
 # Append image and GPU flags safely
@@ -227,7 +239,13 @@ DESKTOP_EOF
 info "デスクトップエントリをインストール: $INSTALL_APPS/zundux_tts.desktop"
 
 # Install icon
-cp "$SCRIPT_DIR/assets/design-1.png" "$INSTALL_ICONS/zundux_tts.png"
+if [ -f "$SCRIPT_DIR/assets/design-1.png" ]; then
+    cp "$SCRIPT_DIR/assets/design-1.png" "$INSTALL_ICONS/zundux_tts.png"
+else
+    # Download icon from repository when running without source checkout
+    curl -fsSL "https://raw.githubusercontent.com/${GITHUB_REPO}/master/assets/design-1.png" -o "$INSTALL_ICONS/zundux_tts.png" 2>/dev/null || \
+        warn "アイコンのダウンロードに失敗しました（アプリの動作には影響しません）"
+fi
 info "アイコンをインストール: $INSTALL_ICONS/zundux_tts.png"
 
 # Update icon cache

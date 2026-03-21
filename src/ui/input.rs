@@ -69,11 +69,19 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
         }
 
         if response.has_focus() {
-            let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let shift_held = ui.input(|i| i.modifiers.shift);
-            if enter_pressed && !shift_held && !state.input_text.trim().is_empty() {
-                state.pending_send = Some(state.input_text.trim().to_string());
-                state.input_text.clear();
+            // Skip Enter-to-send when IME is active (composing or just committed).
+            // IME confirmation also produces an Enter key event, so without this
+            // guard the text would be sent (or cleared) on every IME commit.
+            let ime_active =
+                ui.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Ime(_))));
+
+            if !ime_active {
+                let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
+                let shift_held = ui.input(|i| i.modifiers.shift);
+                if enter_pressed && !shift_held && !state.input_text.trim().is_empty() {
+                    state.pending_send = Some(state.input_text.trim().to_string());
+                    state.input_text.clear();
+                }
             }
         }
     });

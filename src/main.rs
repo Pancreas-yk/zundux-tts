@@ -58,8 +58,42 @@ fn setup_japanese_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
+fn setup_ime_env() {
+    // Force X11 backend for IME support (Wayland IME support in winit/egui is incomplete)
+    if std::env::var("WINIT_UNIX_BACKEND").is_err() {
+        std::env::set_var("WINIT_UNIX_BACKEND", "x11");
+    }
+
+    // Auto-detect and set XMODIFIERS for IME if not already configured
+    if std::env::var("XMODIFIERS").is_err() {
+        let has_fcitx = std::process::Command::new("pgrep")
+            .args(["-x", "fcitx5"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+            || std::process::Command::new("pgrep")
+                .args(["-x", "fcitx"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+
+        let has_ibus = std::process::Command::new("pgrep")
+            .args(["-x", "ibus-daemon"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+
+        if has_fcitx {
+            std::env::set_var("XMODIFIERS", "@im=fcitx");
+        } else if has_ibus {
+            std::env::set_var("XMODIFIERS", "@im=ibus");
+        }
+    }
+}
+
 fn main() -> eframe::Result<()> {
     tracing_subscriber::fmt::init();
+    setup_ime_env();
 
     // Register cleanup handler for SIGTERM/SIGINT
     let cleanup_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
