@@ -21,13 +21,18 @@ impl Drop for PlaybackGuard {
 
 /// Messages from the tokio runtime back to the UI thread
 enum UiMessage {
-    WavReady { wav: Vec<u8>, text: String },
+    WavReady {
+        wav: Vec<u8>,
+        text: String,
+    },
     SpeakersLoaded(Vec<Speaker>),
     HealthCheckResult(bool),
     Error(String),
     UserDictLoaded(crate::tts::types::UserDict),
     UserDictUpdated,
-    LoudnessScanComplete(std::collections::HashMap<std::path::PathBuf, crate::audio::loudness::LoudnessInfo>),
+    LoudnessScanComplete(
+        std::collections::HashMap<std::path::PathBuf, crate::audio::loudness::LoudnessInfo>,
+    ),
 }
 
 /// Commands from the UI thread to the tokio runtime
@@ -94,7 +99,8 @@ pub struct AppState {
     pub pending_refresh_mic_sources: bool,
     pub color_edit_buffers: std::collections::HashMap<String, String>,
     pub pending_stop_speaking: bool,
-    pub soundboard_loudness: std::collections::HashMap<std::path::PathBuf, crate::audio::loudness::LoudnessInfo>,
+    pub soundboard_loudness:
+        std::collections::HashMap<std::path::PathBuf, crate::audio::loudness::LoudnessInfo>,
     pub pending_normalize_all: bool,
     pub pending_loudness_scan: bool,
     pub needs_initial_focus: bool,
@@ -479,7 +485,8 @@ impl ZunduxApp {
                     for entry in entries.flatten() {
                         let p = entry.path();
                         if let Some(ext) = p.extension().and_then(|e| e.to_str()) {
-                            if matches!(ext.to_lowercase().as_str(), "wav" | "mp3" | "ogg" | "flac") {
+                            if matches!(ext.to_lowercase().as_str(), "wav" | "mp3" | "ogg" | "flac")
+                            {
                                 let name = p
                                     .file_stem()
                                     .and_then(|s| s.to_str())
@@ -515,7 +522,11 @@ impl ZunduxApp {
                             results.insert(path.clone(), info);
                         }
                         Err(e) => {
-                            tracing::warn!("Loudness analysis failed for {}: {}", path.display(), e);
+                            tracing::warn!(
+                                "Loudness analysis failed for {}: {}",
+                                path.display(),
+                                e
+                            );
                         }
                     }
                 }

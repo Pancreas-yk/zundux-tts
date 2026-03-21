@@ -373,17 +373,13 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
 
             ui.horizontal(|ui| {
                 ui.label("ターゲット音量 (LUFS):");
-                ui.add(
-                    egui::Slider::new(&mut state.config.target_lufs, -24.0..=-6.0)
-                        .step_by(0.5),
-                );
+                ui.add(egui::Slider::new(&mut state.config.target_lufs, -24.0..=-6.0).step_by(0.5));
             });
 
             ui.horizontal(|ui| {
                 ui.label("許容範囲 (±LUFS):");
                 ui.add(
-                    egui::Slider::new(&mut state.config.loudness_tolerance, 1.0..=6.0)
-                        .step_by(0.5),
+                    egui::Slider::new(&mut state.config.loudness_tolerance, 1.0..=6.0).step_by(0.5),
                 );
             });
 

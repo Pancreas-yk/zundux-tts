@@ -116,11 +116,7 @@ impl VirtualDevice {
             } else {
                 let id_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
                 self.source_module_id = id_str.parse().ok();
-                tracing::info!(
-                    "Created virtual source {} (module {})",
-                    source_name,
-                    id_str
-                );
+                tracing::info!("Created virtual source {} (module {})", source_name, id_str);
             }
         } else {
             tracing::info!("Virtual source {} already exists", self.source_name());

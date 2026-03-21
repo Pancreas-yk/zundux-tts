@@ -5,6 +5,7 @@ use std::process::Command;
 #[derive(Debug, Clone)]
 pub struct LoudnessInfo {
     pub lufs: f64,
+    #[allow(dead_code)]
     pub peak_dbfs: f64,
 }
 
@@ -53,10 +54,9 @@ impl BiquadState {
     }
 
     fn process(&mut self, coeffs: &BiquadCoeffs, input: f64) -> f64 {
-        let output =
-            coeffs.b0 * input + coeffs.b1 * self.x1 + coeffs.b2 * self.x2
-                - coeffs.a1 * self.y1
-                - coeffs.a2 * self.y2;
+        let output = coeffs.b0 * input + coeffs.b1 * self.x1 + coeffs.b2 * self.x2
+            - coeffs.a1 * self.y1
+            - coeffs.a2 * self.y2;
         self.x2 = self.x1;
         self.x1 = input;
         self.y2 = self.y1;
@@ -95,8 +95,17 @@ fn decode_to_pcm(path: &Path) -> Result<Vec<f64>, LoudnessError> {
         .args(["-i"])
         .arg(path)
         .args([
-            "-f", "s16le", "-acodec", "pcm_s16le", "-ac", "1", "-ar", "48000", "-loglevel",
-            "error", "pipe:1",
+            "-f",
+            "s16le",
+            "-acodec",
+            "pcm_s16le",
+            "-ac",
+            "1",
+            "-ar",
+            "48000",
+            "-loglevel",
+            "error",
+            "pipe:1",
         ])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())

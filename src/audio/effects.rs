@@ -6,9 +6,7 @@ pub fn apply_echo(wav_data: &[u8], delay_ms: u32, decay: f64) -> Vec<u8> {
         return wav_data.to_vec();
     }
 
-    let sample_rate = u32::from_le_bytes([
-        wav_data[24], wav_data[25], wav_data[26], wav_data[27],
-    ]);
+    let sample_rate = u32::from_le_bytes([wav_data[24], wav_data[25], wav_data[26], wav_data[27]]);
     let bits_per_sample = u16::from_le_bytes([wav_data[34], wav_data[35]]);
 
     if bits_per_sample != 16 {

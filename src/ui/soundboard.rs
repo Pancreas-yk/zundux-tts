@@ -29,8 +29,8 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
         {
             state.pending_soundboard_scan = true;
         }
-        if !state.soundboard_loudness.is_empty() {
-            if ui
+        if !state.soundboard_loudness.is_empty()
+            && ui
                 .add(
                     egui::Button::new(
                         egui::RichText::new("全て自動調整")
@@ -41,9 +41,8 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                     .fill(theme.color(theme.chip_background)),
                 )
                 .clicked()
-            {
-                state.pending_normalize_all = true;
-            }
+        {
+            state.pending_normalize_all = true;
         }
     });
 
@@ -265,12 +264,7 @@ fn show_sound_chips(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
     });
 }
 
-fn loudness_color(
-    lufs: f64,
-    target: f64,
-    tolerance: f64,
-    theme: &Theme,
-) -> egui::Color32 {
+fn loudness_color(lufs: f64, target: f64, tolerance: f64, theme: &Theme) -> egui::Color32 {
     if lufs > target + tolerance {
         theme.color(theme.status_error)
     } else if lufs < target - tolerance {

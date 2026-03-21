@@ -59,10 +59,7 @@ impl DesktopCapture {
                     .trim_matches('"')
                     .to_string();
             } else if trimmed.starts_with("Sink: ") {
-                current_sink = trimmed
-                    .strip_prefix("Sink: ")
-                    .unwrap_or("")
-                    .to_string();
+                current_sink = trimmed.strip_prefix("Sink: ").unwrap_or("").to_string();
             }
         }
         if let Some(id) = current_id {

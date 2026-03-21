@@ -2,8 +2,8 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 
-use super::TtsEngine;
 use super::types::{Speaker, SynthParams, UserDict};
+use super::TtsEngine;
 
 pub struct VoicevoxEngine {
     client: Client,
@@ -20,9 +20,15 @@ impl VoicevoxEngine {
 
     pub async fn list_user_dict(&self) -> Result<UserDict> {
         let url = format!("{}/user_dict", self.base_url);
-        let resp = self.client.get(&url).send().await
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
             .context("Failed to fetch user dictionary")?;
-        let dict: UserDict = resp.json().await
+        let dict: UserDict = resp
+            .json()
+            .await
             .context("Failed to parse user dictionary")?;
         Ok(dict)
     }
@@ -31,27 +37,36 @@ impl VoicevoxEngine {
         let url = format!("{}/user_dict_word", self.base_url);
         let fullwidth_surface: String = surface.chars().map(halfwidth_to_fullwidth).collect();
         let katakana: String = pronunciation.chars().map(hiragana_to_katakana).collect();
-        let resp = self.client.post(&url)
+        let resp = self
+            .client
+            .post(&url)
             .query(&[
                 ("surface", fullwidth_surface.as_str()),
                 ("pronunciation", katakana.as_str()),
                 ("accent_type", "1"),
             ])
-            .send().await
+            .send()
+            .await
             .context("Failed to add dictionary word")?;
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
             anyhow::bail!("VOICEVOX returned {} : {}", status, body);
         }
-        let uuid: String = resp.json().await
+        let uuid: String = resp
+            .json()
+            .await
             .context("Failed to parse add word response")?;
         Ok(uuid)
     }
 
     pub async fn delete_user_dict_word(&self, word_uuid: &str) -> Result<()> {
         let url = format!("{}/user_dict_word/{}", self.base_url, word_uuid);
-        let resp = self.client.delete(&url).send().await
+        let resp = self
+            .client
+            .delete(&url)
+            .send()
+            .await
             .context("Failed to delete dictionary word")?;
         if !resp.status().is_success() {
             let status = resp.status();
@@ -84,7 +99,10 @@ impl TtsEngine for VoicevoxEngine {
         let resp = self
             .client
             .post(&query_url)
-            .query(&[("text", fullwidth_text.as_str()), ("speaker", &params.speaker_id.to_string())])
+            .query(&[
+                ("text", fullwidth_text.as_str()),
+                ("speaker", &params.speaker_id.to_string()),
+            ])
             .send()
             .await
             .context("Failed to create audio query")?;
@@ -154,7 +172,7 @@ fn hiragana_to_katakana(c: char) -> char {
 fn halfwidth_to_fullwidth(c: char) -> char {
     match c {
         ' ' => '\u{3000}', // full-width space
-        '!' ..= '~' => {
+        '!'..='~' => {
             // ASCII printable range U+0021..U+007E → full-width U+FF01..U+FF5E
             char::from_u32(c as u32 + 0xFEE0).unwrap_or(c)
         }
