@@ -27,6 +27,7 @@ enum UiMessage {
     Error(String),
     UserDictLoaded(crate::tts::types::UserDict),
     UserDictUpdated,
+    LoudnessScanComplete(std::collections::HashMap<std::path::PathBuf, crate::audio::loudness::LoudnessInfo>),
 }
 
 /// Commands from the UI thread to the tokio runtime
@@ -93,6 +94,9 @@ pub struct AppState {
     pub pending_refresh_mic_sources: bool,
     pub color_edit_buffers: std::collections::HashMap<String, String>,
     pub pending_stop_speaking: bool,
+    pub soundboard_loudness: std::collections::HashMap<std::path::PathBuf, crate::audio::loudness::LoudnessInfo>,
+    pub pending_normalize_all: bool,
+    pub pending_loudness_scan: bool,
     pub needs_initial_focus: bool,
 }
 
@@ -112,6 +116,7 @@ pub struct ZunduxApp {
     is_soundboard_playing: Arc<AtomicBool>,
     soundboard_pids: Arc<std::sync::Mutex<Vec<u32>>>,
     soundboard_cancel: Arc<AtomicBool>,
+    ui_tx: mpsc::Sender<UiMessage>,
     desktop_capture: crate::media::desktop_capture::DesktopCapture,
     needs_theme_update: bool,
 }
@@ -122,6 +127,7 @@ const HEALTH_CHECK_INTERVAL_LAUNCHING_SECS: u64 = 1;
 impl ZunduxApp {
     pub fn new(config: AppConfig, tts_manager: TtsManager, rt: tokio::runtime::Handle) -> Self {
         let (ui_tx, ui_rx) = mpsc::channel::<UiMessage>();
+        let ui_tx_clone = ui_tx.clone();
         let (tts_tx, tts_rx) = mpsc::channel::<TtsCommand>();
 
         let auto_launch_voicevox = config.auto_launch_voicevox;
@@ -187,6 +193,9 @@ impl ZunduxApp {
                 pending_refresh_mic_sources: true,
                 color_edit_buffers: std::collections::HashMap::new(),
                 pending_stop_speaking: false,
+                soundboard_loudness: std::collections::HashMap::new(),
+                pending_normalize_all: false,
+                pending_loudness_scan: true,
                 needs_initial_focus: true,
             },
             audio_manager,
@@ -200,6 +209,7 @@ impl ZunduxApp {
             is_soundboard_playing: Arc::new(AtomicBool::new(false)),
             soundboard_pids: Arc::new(std::sync::Mutex::new(Vec::new())),
             soundboard_cancel: Arc::new(AtomicBool::new(false)),
+            ui_tx: ui_tx_clone,
             desktop_capture: crate::media::desktop_capture::DesktopCapture::new(),
             needs_theme_update: true,
         }
@@ -356,6 +366,9 @@ impl ZunduxApp {
                 }
                 UiMessage::UserDictUpdated => {
                     let _ = self.tts_tx.send(TtsCommand::LoadUserDict);
+                }
+                UiMessage::LoudnessScanComplete(loudness_map) => {
+                    self.state.soundboard_loudness = loudness_map;
                 }
             }
         }

@@ -25,6 +25,12 @@ pub struct AppConfig {
     pub echo_enabled: bool,
     pub echo_delay_ms: u32,
     pub echo_decay: f64,
+    #[serde(default = "default_target_lufs")]
+    pub target_lufs: f64,
+    #[serde(default = "default_loudness_tolerance")]
+    pub loudness_tolerance: f64,
+    #[serde(default)]
+    pub soundboard_gains: std::collections::HashMap<String, f64>,
     #[serde(default)]
     pub silent_words: Vec<String>,
     #[serde(default)]
@@ -38,6 +44,14 @@ pub struct SynthParamsConfig {
     pub pitch_scale: f64,
     pub intonation_scale: f64,
     pub volume_scale: f64,
+}
+
+fn default_target_lufs() -> f64 {
+    -14.0
+}
+
+fn default_loudness_tolerance() -> f64 {
+    3.0
 }
 
 impl Default for SynthParamsConfig {
@@ -78,6 +92,9 @@ impl Default for AppConfig {
             echo_enabled: false,
             echo_delay_ms: 200,
             echo_decay: 0.4,
+            target_lufs: -14.0,
+            loudness_tolerance: 3.0,
+            soundboard_gains: std::collections::HashMap::new(),
             silent_words: Vec::new(),
             theme: Theme::default(),
         }
