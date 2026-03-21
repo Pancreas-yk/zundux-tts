@@ -68,6 +68,57 @@ download_binary() {
     info "バイナリをインストール: $INSTALL_BIN/zundux_tts"
 }
 
+# ---------- アンインストール ----------
+if [ "${1:-}" = "--uninstall" ]; then
+    echo -e "${BOLD}ZunduxTTS をアンインストールします${NC}"
+    echo ""
+
+    # Stop and remove Docker container
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^zundux-voicevox$"; then
+        info "VOICEVOXコンテナを停止中..."
+        docker stop zundux-voicevox 2>/dev/null || true
+    fi
+
+    # Remove installed files
+    for f in "$INSTALL_BIN/zundux_tts" "$INSTALL_BIN/zundux_tts_launch.sh" \
+             "$INSTALL_APPS/zundux_tts.desktop" "$INSTALL_ICONS/zundux_tts.png"; do
+        if [ -f "$f" ]; then
+            rm "$f"
+            info "削除: $f"
+        fi
+    done
+
+    # Update icon cache
+    if command -v gtk-update-icon-cache &>/dev/null; then
+        gtk-update-icon-cache -f -t "$HOME/.local/share/icons/hicolor" 2>/dev/null || true
+    fi
+
+    # Ask about config
+    if [ -d "$CONFIG_DIR" ]; then
+        echo ""
+        read -rp "設定ファイルも削除しますか？ ($CONFIG_DIR) [y/N]: " del_config
+        if [ "$del_config" = "y" ] || [ "$del_config" = "Y" ]; then
+            rm -rf "$CONFIG_DIR"
+            info "設定ディレクトリを削除: $CONFIG_DIR"
+        else
+            info "設定ファイルを保持しました"
+        fi
+    fi
+
+    # Ask about Docker image
+    echo ""
+    read -rp "VOICEVOXのDockerイメージも削除しますか？ [y/N]: " del_image
+    if [ "$del_image" = "y" ] || [ "$del_image" = "Y" ]; then
+        docker images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep "^voicevox/voicevox_engine" | while read -r img; do
+            docker rmi "$img" 2>/dev/null && info "Dockerイメージを削除: $img"
+        done
+    fi
+
+    echo ""
+    info "アンインストールが完了しました"
+    exit 0
+fi
+
 # ---------- Step 1: 依存パッケージのインストール ----------
 info "依存パッケージを確認中..."
 
