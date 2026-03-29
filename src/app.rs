@@ -141,6 +141,7 @@ impl ZunduxApp {
         let (tts_tx, tts_rx) = mpsc::channel::<TtsCommand>();
 
         let auto_launch_voicevox = config.auto_launch_voicevox;
+        let templates_default_expanded = config.templates_default_expanded;
         let device_name = config.virtual_device_name.clone();
         let mut audio_manager = AudioManager::new(&device_name);
         let device_ready =
@@ -193,7 +194,7 @@ impl ZunduxApp {
                 is_capturing: false,
                 error_display_time: None,
                 error_hovered: false,
-                templates_expanded: false,
+                templates_expanded: templates_default_expanded,
                 adding_template: false,
                 needs_theme_update: false,
                 mic_passthrough: false,

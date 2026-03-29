@@ -308,21 +308,6 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
 
         ui.add_space(8.0);
 
-        // Speaker selection
-        ui.collapsing("スピーカー選択", |ui| {
-            for speaker in &state.speakers {
-                for style in &speaker.styles {
-                    let label = format!("{} ({})", speaker.name, style.name);
-                    ui.radio_value(&mut state.config.speaker_id, style.id, &label);
-                }
-            }
-            if state.speakers.is_empty() {
-                ui.label("VOICEVOXに接続してスピーカー一覧を取得してください");
-            }
-        });
-
-        ui.add_space(8.0);
-
         ui.collapsing("ユーザー辞書", |ui| {
             if state.voicevox_connected {
                 ui.horizontal(|ui| {
@@ -623,6 +608,14 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
 
         // Templates
         ui.collapsing("テンプレート", |ui| {
+            ui.checkbox(
+                &mut state.config.templates_default_expanded,
+                "起動時にテンプレートを展開した状態にする",
+            );
+            ui.add_space(4.0);
+            ui.separator();
+            ui.add_space(4.0);
+
             let mut to_remove = None;
             for (i, template) in state.config.templates.iter_mut().enumerate() {
                 ui.horizontal(|ui| {

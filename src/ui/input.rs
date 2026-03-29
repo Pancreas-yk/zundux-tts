@@ -10,38 +10,39 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
 
     ui.add_space(theme.spacing_large);
 
-    // -- Preset selector --
-    ui.label(
-        egui::RichText::new("PRESET")
-            .size(10.0)
-            .color(theme.color(theme.text_muted)),
-    );
-    ui.add_space(theme.spacing_small);
-
-    let preset_label = state
-        .active_preset_idx
-        .and_then(|i| state.config.presets.get(i))
-        .map(|p| p.name.clone())
-        .unwrap_or_else(|| "─".to_string());
-
-    egui::ComboBox::from_id_salt("preset_select")
-        .selected_text(&preset_label)
-        .width(ui.available_width() - theme.spacing_medium)
-        .show_ui(ui, |ui| {
-            for i in 0..state.config.presets.len() {
-                let name = state.config.presets[i].name.clone();
-                let selected = state.active_preset_idx == Some(i);
-                if ui.selectable_label(selected, &name).clicked() {
-                    state.active_preset_idx = Some(i);
-                    state.config.speaker_id = state.config.presets[i].speaker_id;
-                    state.config.synth_params = state.config.presets[i].synth_params.clone();
-                    let _ = state.config.save();
-                }
+    // -- Preset chips --
+    let chip_rounding = CornerRadius::same(theme.chip_rounding as u8);
+    ui.horizontal_wrapped(|ui| {
+        for i in 0..state.config.presets.len() {
+            let name = state.config.presets[i].name.clone();
+            let is_active = state.active_preset_idx == Some(i);
+            let text_color = if is_active {
+                theme.color(theme.accent)
+            } else {
+                theme.color(theme.text_secondary)
+            };
+            let btn = ui.add(
+                egui::Button::new(
+                    egui::RichText::new(&name).color(text_color).size(11.0),
+                )
+                .corner_radius(chip_rounding)
+                .fill(theme.color(theme.chip_background)),
+            );
+            if btn.clicked() && !is_active {
+                state.active_preset_idx = Some(i);
+                state.config.speaker_id = state.config.presets[i].speaker_id;
+                state.config.synth_params = state.config.presets[i].synth_params.clone();
+                let _ = state.config.save();
             }
-            if state.config.presets.is_empty() {
-                ui.label("設定でプリセットを作成してください");
-            }
-        });
+        }
+        if state.config.presets.is_empty() {
+            ui.label(
+                egui::RichText::new("設定でプリセットを作成してください")
+                    .size(10.0)
+                    .color(theme.color(theme.text_muted)),
+            );
+        }
+    });
 
     ui.add_space(theme.spacing_large);
 
@@ -164,26 +165,24 @@ fn show_template_chips(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
 
     let start_y = ui.cursor().top();
     let row_height = 28.0;
-    let max_y = start_y + (row_height * TEMPLATE_MAX_VISIBLE_ROWS as f32) + theme.spacing_small;
-    let expanded_max_y = start_y + (row_height * 5.0) + theme.spacing_small;
-    let effective_max_y = if state.templates_expanded {
-        expanded_max_y
-    } else {
-        max_y
-    };
+    let collapsed_max_y =
+        start_y + (row_height * TEMPLATE_MAX_VISIBLE_ROWS as f32) + theme.spacing_small;
 
+    // Count how many templates would overflow the collapsed view without rendering them.
+    // We track this outside the horizontal_wrapped closure so both the chip loop and
+    // the expand/collapse button can use the same value.
     let mut overflow_count = 0;
+    let mut had_overflow = false; // true if any chip was clipped even when expanded before
 
     ui.horizontal_wrapped(|ui| {
         for (i, template) in templates.iter().enumerate() {
-            if ui.cursor().top() > effective_max_y {
+            // Clip when collapsed and cursor has passed the allowed height.
+            if !state.templates_expanded && ui.cursor().top() > collapsed_max_y {
                 overflow_count = templates.len() - i;
                 break;
             }
 
             let display_text = truncate_text(template, TEMPLATE_MAX_DISPLAY_LEN);
-
-            // Template chip button
             let btn = ui.add(
                 egui::Button::new(
                     egui::RichText::new(&display_text)
@@ -193,18 +192,18 @@ fn show_template_chips(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
                 .corner_radius(chip_rounding)
                 .fill(theme.color(theme.chip_background)),
             );
-
             if template.chars().count() > TEMPLATE_MAX_DISPLAY_LEN {
                 btn.clone().on_hover_text(template);
             }
-
             if btn.clicked() {
                 state.pending_send = Some(template.trim().to_string());
                 state.input_text.clear();
             }
         }
 
+        // Expand button (collapsed state with overflow)
         if overflow_count > 0 {
+            had_overflow = true;
             if ui
                 .add(
                     egui::Button::new(
@@ -219,21 +218,29 @@ fn show_template_chips(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
             {
                 state.templates_expanded = true;
             }
-        } else if state.templates_expanded
-            && templates.len() > TEMPLATE_MAX_VISIBLE_ROWS * 4
-            && ui
-                .add(
-                    egui::Button::new(
-                        egui::RichText::new("Show less")
-                            .color(theme.color(theme.text_muted))
-                            .size(11.0),
+        }
+
+        // Collapse button (expanded state) — shown whenever there is something to hide
+        if state.templates_expanded && !had_overflow {
+            // Check whether collapsing would actually hide anything by comparing
+            // current cursor height to the collapsed threshold.
+            let would_clip = ui.cursor().top() > collapsed_max_y
+                || templates.len() > TEMPLATE_MAX_VISIBLE_ROWS * 3;
+            if would_clip
+                && ui
+                    .add(
+                        egui::Button::new(
+                            egui::RichText::new("Show less")
+                                .color(theme.color(theme.text_muted))
+                                .size(11.0),
+                        )
+                        .corner_radius(chip_rounding)
+                        .fill(theme.color(theme.chip_background)),
                     )
-                    .corner_radius(chip_rounding)
-                    .fill(theme.color(theme.chip_background)),
-                )
-                .clicked()
-        {
-            state.templates_expanded = false;
+                    .clicked()
+            {
+                state.templates_expanded = false;
+            }
         }
 
         if ui

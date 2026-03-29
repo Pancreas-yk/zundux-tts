@@ -39,6 +39,8 @@ pub struct AppConfig {
     pub theme: Theme,
     #[serde(default)]
     pub presets: Vec<SpeakerPreset>,
+    #[serde(default)]
+    pub templates_default_expanded: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +112,7 @@ impl Default for AppConfig {
             silent_words: Vec::new(),
             theme: Theme::default(),
             presets: Self::default_presets(),
+            templates_default_expanded: false,
         }
     }
 }
