@@ -165,9 +165,11 @@ impl VoicegerEngine {
             return false;
         }
         let ascii_alpha_count = t.chars().filter(|c| c.is_ascii_alphabetic()).count();
-        let ascii_only = t
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c.is_ascii_whitespace() || "-_.,!?".contains(c));
+        let ascii_only = t.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || c.is_ascii_whitespace()
+                || matches!(c, '-' | '_' | '.' | ',' | '!' | '?')
+        });
         ascii_only && ascii_alpha_count > 0 && ascii_alpha_count <= 3
     }
 }
