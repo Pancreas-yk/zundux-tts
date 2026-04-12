@@ -1,10 +1,8 @@
 use anyhow::{Context, Result};
 use rodio::{OutputStream, Sink};
-use std::io::Cursor;
 use std::process::Command;
 
-/// Try to play WAV data through rodio by finding the virtual device via cpal.
-/// Falls back to paplay subprocess if rodio can't find the device.
+/// Play WAV data to the virtual sink using paplay.
 /// If `monitor` is true, also plays to the default output device for self-monitoring.
 /// `cancel` can be used to stop playback early.
 pub fn play_wav(
@@ -26,25 +24,13 @@ pub fn play_wav(
     }
 
     tracing::info!("play_wav: {} bytes → device={:?}", wav_data.len(), device_name);
-    match play_with_rodio_cancellable(&wav_data, device_name, &cancel) {
-        Ok(()) => {
-            tracing::info!("play_wav: rodio OK");
-            Ok(())
-        }
-        Err(e) => {
-            if cancel.load(std::sync::atomic::Ordering::SeqCst) {
-                return Ok(());
-            }
-            tracing::warn!("rodio playback failed ({}), falling back to paplay", e);
-            let result = play_with_paplay(&wav_data, device_name, &cancel);
-            if let Err(ref pe) = result {
-                tracing::error!("paplay fallback also failed: {}", pe);
-            } else {
-                tracing::info!("play_wav: paplay OK");
-            }
-            result
-        }
+    let result = play_with_paplay(&wav_data, device_name, &cancel);
+    if let Err(ref pe) = result {
+        tracing::error!("paplay playback failed: {}", pe);
+    } else {
+        tracing::info!("play_wav: paplay OK");
     }
+    result
 }
 
 /// Play WAV data on the default output device with cancel support.
@@ -92,38 +78,6 @@ fn play_on_default_output_cancellable(
             None => std::thread::sleep(std::time::Duration::from_millis(50)),
         }
     }
-}
-
-fn play_with_rodio_cancellable(
-    wav_data: &[u8],
-    device_name: &str,
-    cancel: &std::sync::atomic::AtomicBool,
-) -> Result<()> {
-    use rodio::cpal::traits::{DeviceTrait, HostTrait};
-
-    let host = rodio::cpal::default_host();
-    let target_device = host
-        .output_devices()
-        .context("Failed to enumerate output devices")?
-        .find(|d| d.name().map(|n| n.contains(device_name)).unwrap_or(false))
-        .context("Virtual device not found in cpal devices")?;
-
-    let (_stream, handle) =
-        OutputStream::try_from_device(&target_device).context("Failed to open output stream")?;
-    let sink = Sink::try_new(&handle).context("Failed to create sink")?;
-
-    let cursor = Cursor::new(wav_data.to_vec());
-    let source = rodio::Decoder::new(cursor).context("Failed to decode WAV data")?;
-    sink.append(source);
-    while !sink.empty() {
-        if cancel.load(std::sync::atomic::Ordering::SeqCst) {
-            sink.stop();
-            return Ok(());
-        }
-        std::thread::sleep(std::time::Duration::from_millis(50));
-    }
-
-    Ok(())
 }
 
 /// Play an audio file (WAV/MP3/OGG) through a PulseAudio device using ffmpeg+paplay.

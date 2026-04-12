@@ -156,6 +156,24 @@ impl VoicegerEngine {
             .map(|(code, _, _)| *code)
             .unwrap_or("ja")
     }
+
+    /// Very short ASCII-only input tends to echo/bleed reference speech in some GPT-SoVITS setups.
+    /// Use ref-free mode for those cases.
+    fn should_auto_ref_free(text: &str) -> bool {
+        let t = text.trim();
+        if t.is_empty() {
+            return false;
+        }
+        let ascii_alpha_count = t.chars().filter(|c| c.is_ascii_alphabetic()).count();
+        // Allow common short-token punctuation users often type in chat snippets.
+        // Restricting to this small set keeps auto-ref-free targeted and predictable.
+        let ascii_only = t.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || c.is_ascii_whitespace()
+                || matches!(c, '-' | '_' | '.' | ',' | '!' | '?')
+        });
+        ascii_only && ascii_alpha_count > 0 && ascii_alpha_count <= 3
+    }
 }
 
 #[async_trait]
@@ -184,21 +202,34 @@ impl TtsEngine for VoicegerEngine {
         let temperature = (0.5 + params.intonation_scale * 0.5).clamp(0.1, 2.0);
 
         let ref_audio = params.aux_ref_audio.as_deref().unwrap_or(&self.ref_audio_path);
+        let ref_free = params.voiceger_ref_free || Self::should_auto_ref_free(text);
 
         let url = format!("{}/tts", self.base_url);
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "text": text,
             "text_lang": text_lang,
-            "ref_audio_path": ref_audio,
-            "prompt_text": self.prompt_text,
-            "prompt_lang": self.prompt_lang,
             "speed_factor": params.speed_scale,
             "temperature": temperature,
             "streaming_mode": false,
             "media_type": "wav",
+            "ref_free": ref_free,
         });
+        if !ref_free {
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("ref_audio_path".to_string(), serde_json::json!(ref_audio));
+                obj.insert("prompt_text".to_string(), serde_json::json!(&self.prompt_text));
+                obj.insert("prompt_lang".to_string(), serde_json::json!(&self.prompt_lang));
+            }
+        }
 
-        tracing::info!("Voiceger synthesize: text={:?} lang={} temp={:.2} ref={}", text, text_lang, temperature, ref_audio);
+        tracing::info!(
+            "Voiceger synthesize: text={:?} lang={} temp={:.2} ref={} ref_free={}",
+            text,
+            text_lang,
+            temperature,
+            ref_audio,
+            ref_free
+        );
 
         let resp = self
             .client
@@ -310,5 +341,14 @@ mod tests {
     #[test]
     fn lang_for_unknown_speaker_id_defaults_to_ja() {
         assert_eq!(VoicegerEngine::lang_for_speaker_id(99), "ja");
+    }
+
+    #[test]
+    fn should_auto_ref_free_for_short_ascii_tokens() {
+        assert!(VoicegerEngine::should_auto_ref_free("wa"));
+        assert!(VoicegerEngine::should_auto_ref_free("ok!"));
+        assert!(!VoicegerEngine::should_auto_ref_free("hello"));
+        assert!(!VoicegerEngine::should_auto_ref_free("こんにちは"));
+        assert!(!VoicegerEngine::should_auto_ref_free(""));
     }
 }

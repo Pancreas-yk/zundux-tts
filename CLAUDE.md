@@ -48,7 +48,7 @@ The app has two concurrency contexts that communicate via `std::sync::mpsc` chan
 
 ### Audio pipeline
 1. `VirtualDevice` (`src/audio/virtual_device.rs`) creates a PulseAudio null sink via `pactl load-module module-null-sink`. VRChat should be configured to use the monitor source (`<sink_name>.monitor`) as its microphone input.
-2. `playback::play_wav` (`src/audio/playback.rs`) tries rodio first (finds the sink by name via cpal), then falls back to `paplay` subprocess if rodio can't enumerate the device.
+2. `playback::play_wav` (`src/audio/playback.rs`) plays TTS WAV through `paplay` to the configured virtual sink. Monitor playback to speakers is handled separately.
 
 ### TTS abstraction (`src/tts/`)
 `TtsEngine` trait with `list_speakers`, `synthesize`, `health_check`. Only `VoicevoxEngine` is implemented. Synthesis is a two-step VOICEVOX API call: `POST /audio_query` then `POST /synthesis`.
@@ -61,6 +61,6 @@ Two screens (tabs): `Screen::Input` (`src/ui/input.rs`) and `Screen::Settings` (
 
 ## Runtime Dependencies
 
-- **PulseAudio** (`pactl`, `paplay`) — required for virtual device creation and fallback audio playback
+- **PulseAudio** (`pactl`, `paplay`) — required for virtual device creation and TTS audio playback
 - **VOICEVOX Engine** — HTTP server at `http://127.0.0.1:50021` by default; can be a local binary, command with args, or Docker command
 - **NotoSansCJK font** — for Japanese text rendering (checked at runtime, gracefully degrades)
