@@ -165,6 +165,8 @@ impl VoicegerEngine {
             return false;
         }
         let ascii_alpha_count = t.chars().filter(|c| c.is_ascii_alphabetic()).count();
+        // Allow common short-token punctuation users often type in chat snippets.
+        // Restricting to this small set keeps auto-ref-free targeted and predictable.
         let ascii_only = t.chars().all(|c| {
             c.is_ascii_alphanumeric()
                 || c.is_ascii_whitespace()

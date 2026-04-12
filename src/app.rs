@@ -491,8 +491,9 @@ impl ZunduxApp {
                         // 2) per-preset emotion WAV
                         // 3) global voiceger_ref_audio (engine default)
                         let aux_ref_audio = if p.engine == crate::config::TtsEngineType::Voiceger {
-                            if !p.voiceger_ref_audio_override.trim().is_empty() {
-                                Some(p.voiceger_ref_audio_override.trim().to_string())
+                            let preset_ref = p.voiceger_ref_audio_override.trim();
+                            if !preset_ref.is_empty() {
+                                Some(preset_ref.to_string())
                             } else if !p.voiceger_emotion.is_empty() {
                                 crate::tts::voiceger::VOICEGER_EMOTIONS
                                     .iter()

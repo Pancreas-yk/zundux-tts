@@ -3,6 +3,8 @@ use crate::config::{AppConfig, TtsEngineType};
 use crate::tts::voiceger::VOICEGER_LANGUAGES;
 use crate::validation;
 
+const PRESET_REF_WAV_BUTTONS_WIDTH: f32 = 120.0;
+
 /// Render the preset list + editor for one engine group.
 /// Call this from inside a `ui.collapsing(...)` closure.
 fn show_preset_section(ui: &mut egui::Ui, state: &mut AppState, engine_group: &TtsEngineType) {
@@ -80,7 +82,7 @@ fn show_preset_section(ui: &mut egui::Ui, state: &mut AppState, engine_group: &T
                     ui.label("参照WAV(任意):");
                     ui.add(
                         egui::TextEdit::singleline(&mut buf.voiceger_ref_audio_override)
-                            .desired_width(ui.available_width() - 120.0)
+                            .desired_width(ui.available_width() - PRESET_REF_WAV_BUTTONS_WIDTH)
                             .hint_text("空欄 = 感情/グローバル参照音声を使用"),
                     );
                     if ui.small_button("参照").clicked() {
