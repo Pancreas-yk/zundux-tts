@@ -212,6 +212,26 @@ impl VoicegerEngine {
 
         has_japanese && jp_core_len > 0 && jp_core_len <= 8
     }
+
+    /// Returns true when whole text or any sentence-like clause should be synthesized in ref-free mode.
+    fn should_auto_ref_free_in_text(text: &str) -> bool {
+        if Self::should_auto_ref_free(text) {
+            return true;
+        }
+
+        let mut clause_start = 0usize;
+        for (idx, ch) in text.char_indices() {
+            if matches!(ch, '。' | '！' | '？' | '!' | '?' | '\n') {
+                let end = idx + ch.len_utf8();
+                if Self::should_auto_ref_free(&text[clause_start..end]) {
+                    return true;
+                }
+                clause_start = end;
+            }
+        }
+
+        clause_start < text.len() && Self::should_auto_ref_free(&text[clause_start..])
+    }
 }
 
 #[async_trait]
@@ -243,7 +263,7 @@ impl TtsEngine for VoicegerEngine {
             .aux_ref_audio
             .as_deref()
             .unwrap_or(&self.ref_audio_path);
-        let ref_free = params.voiceger_ref_free || Self::should_auto_ref_free(text);
+        let ref_free = params.voiceger_ref_free || Self::should_auto_ref_free_in_text(text);
 
         let url = format!("{}/tts", self.base_url);
         let mut body = serde_json::json!({
@@ -255,18 +275,17 @@ impl TtsEngine for VoicegerEngine {
             "media_type": "wav",
             "ref_free": ref_free,
         });
-        if !ref_free {
-            if let Some(obj) = body.as_object_mut() {
-                obj.insert("ref_audio_path".to_string(), serde_json::json!(ref_audio));
-                obj.insert(
-                    "prompt_text".to_string(),
-                    serde_json::json!(&self.prompt_text),
-                );
-                obj.insert(
-                    "prompt_lang".to_string(),
-                    serde_json::json!(&self.prompt_lang),
-                );
-            }
+        if let Some(obj) = body.as_object_mut() {
+            // Keep reference metadata even in ref_free mode for server-side compatibility.
+            obj.insert("ref_audio_path".to_string(), serde_json::json!(ref_audio));
+            obj.insert(
+                "prompt_text".to_string(),
+                serde_json::json!(&self.prompt_text),
+            );
+            obj.insert(
+                "prompt_lang".to_string(),
+                serde_json::json!(&self.prompt_lang),
+            );
         }
 
         tracing::info!(
@@ -411,6 +430,16 @@ mod tests {
         assert!(VoicegerEngine::should_auto_ref_free("ねえ、どう？"));
         assert!(!VoicegerEngine::should_auto_ref_free(
             "これは短文ではないので通常モードで読む"
+        ));
+    }
+
+    #[test]
+    fn should_auto_ref_free_when_long_text_contains_short_clause() {
+        assert!(VoicegerEngine::should_auto_ref_free_in_text(
+            "これは長文です。少し説明します。いいかな？ありがとう。"
+        ));
+        assert!(!VoicegerEngine::should_auto_ref_free_in_text(
+            "これはそれなりに長い文で、短い挿入句もないため通常モードのままです。"
         ));
     }
 }
