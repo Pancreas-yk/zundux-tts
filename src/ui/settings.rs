@@ -643,16 +643,16 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                 .small()
                 .weak(),
             );
-            if !state.config.voiceger_prompt_text.is_empty() {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "参照テキスト: {}",
-                        &state.config.voiceger_prompt_text
-                    ))
-                    .small()
-                    .weak(),
+            ui.horizontal(|ui| {
+                ui.label("参照テキスト:");
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut state.config.voiceger_prompt_text)
+                        .hint_text("参照音声が喋っている内容"),
                 );
-            }
+                if resp.lost_focus() {
+                    let _ = state.config.save();
+                }
+            });
             ui.add_space(4.0);
             if ui.button("デフォルトに戻す").clicked() {
                 state.config.reset_voiceger_defaults();
