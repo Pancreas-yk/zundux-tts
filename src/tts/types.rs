@@ -23,6 +23,8 @@ pub struct SynthParams {
     pub volume_scale: f64,
     /// Overrides the engine's default reference audio path (Voiceger only).
     pub aux_ref_audio: Option<String>,
+    /// Voiceger only: force reference-free synthesis (`ref_free=true`).
+    pub voiceger_ref_free: bool,
 }
 
 impl SynthParams {
@@ -34,6 +36,7 @@ impl SynthParams {
             intonation_scale: config.synth_params.intonation_scale,
             volume_scale: config.synth_params.volume_scale,
             aux_ref_audio: None,
+            voiceger_ref_free: config.voiceger_ref_free,
         }
     }
 }

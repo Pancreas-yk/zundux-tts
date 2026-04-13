@@ -3,6 +3,8 @@ use crate::config::{AppConfig, TtsEngineType};
 use crate::tts::voiceger::VOICEGER_LANGUAGES;
 use crate::validation;
 
+const PRESET_REF_WAV_BUTTONS_WIDTH: f32 = 120.0;
+
 /// Render the preset list + editor for one engine group.
 /// Call this from inside a `ui.collapsing(...)` closure.
 fn show_preset_section(ui: &mut egui::Ui, state: &mut AppState, engine_group: &TtsEngineType) {
@@ -75,6 +77,36 @@ fn show_preset_section(ui: &mut egui::Ui, state: &mut AppState, engine_group: &T
                             }
                         });
                 });
+                ui.add_space(4.0);
+                ui.horizontal(|ui| {
+                    ui.label("参照音声(任意):");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut buf.voiceger_ref_audio_override)
+                            .desired_width(ui.available_width() - PRESET_REF_WAV_BUTTONS_WIDTH)
+                            .hint_text("空欄 = 感情/グローバル参照音声を使用"),
+                    );
+                    if ui.small_button("参照").clicked() {
+                        if let Some(path) = rfd::FileDialog::new()
+                            .add_filter("音声ファイル", &["wav", "flac", "mp3", "ogg", "m4a", "aac"])
+                            .pick_file()
+                        {
+                            buf.voiceger_ref_audio_override = path.to_string_lossy().to_string();
+                        }
+                    }
+                    if ui.small_button("クリア").clicked() {
+                        buf.voiceger_ref_audio_override.clear();
+                    }
+                });
+                ui.label(
+                    egui::RichText::new("※ 設定時は「参照音声 > 感情 > グローバル参照音声」の順で優先されます")
+                        .small()
+                        .weak(),
+                );
+                ui.label(
+                    egui::RichText::new("⚠ WAV・FLACを推奨。MP3・AACは非可逆圧縮のため高周波が欠落し、声質の再現精度が下がる場合があります。")
+                        .small()
+                        .weak(),
+                );
                 ui.add_space(4.0);
             }
 
@@ -195,6 +227,7 @@ fn show_preset_section(ui: &mut egui::Ui, state: &mut AppState, engine_group: &T
                     synth_params: state.config.synth_params.clone(),
                     engine: engine_group.clone(),
                     voiceger_emotion: String::new(),
+                    voiceger_ref_audio_override: String::new(),
                 });
             }
             if engine_group == &TtsEngineType::Voicevox {
@@ -578,11 +611,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                 ui.label("参照音声:");
                 ui.add(
                     egui::TextEdit::singleline(&mut state.config.voiceger_ref_audio)
-                        .hint_text("参照WAVのパス"),
+                        .hint_text("参照音声のパス"),
                 );
                 if ui.button("参照").clicked() {
                     if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("WAV", &["wav"])
+                        .add_filter("音声ファイル", &["wav", "flac", "mp3", "ogg", "m4a", "aac"])
                         .pick_file()
                     {
                         state.config.voiceger_ref_audio = path.to_string_lossy().to_string();
@@ -590,6 +623,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                     }
                 }
             });
+            ui.label(
+                egui::RichText::new("⚠ WAV・FLACを推奨。MP3・AACは非可逆圧縮のため高周波が欠落し、声質の再現精度が下がる場合があります。")
+                    .small()
+                    .weak(),
+            );
             ui.horizontal(|ui| {
                 ui.label("参照言語:");
                 egui::ComboBox::from_id_salt("voiceger_prompt_lang")
@@ -604,16 +642,27 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                         }
                     });
             });
-            if !state.config.voiceger_prompt_text.is_empty() {
-                ui.label(
-                    egui::RichText::new(format!(
-                        "参照テキスト: {}",
-                        &state.config.voiceger_prompt_text
-                    ))
-                    .small()
-                    .weak(),
+            ui.checkbox(
+                &mut state.config.voiceger_ref_free,
+                "参照なしモード (ref_free) を常時有効",
+            );
+            ui.label(
+                egui::RichText::new(
+                    "※ ON で参照音声/参照テキストを使わず合成します。短い英字入力（例: wa）や短い日本語（例: いいかな？）は、長文中の一節でもOFF時に自動で参照なしへ切り替わります。",
+                )
+                .small()
+                .weak(),
+            );
+            ui.horizontal(|ui| {
+                ui.label("参照テキスト:");
+                let resp = ui.add(
+                    egui::TextEdit::singleline(&mut state.config.voiceger_prompt_text)
+                        .hint_text("参照音声が喋っている内容"),
                 );
-            }
+                if resp.lost_focus() {
+                    let _ = state.config.save();
+                }
+            });
             ui.add_space(4.0);
             if ui.button("デフォルトに戻す").clicked() {
                 state.config.reset_voiceger_defaults();

@@ -67,6 +67,8 @@ pub struct AppConfig {
     pub voiceger_prompt_text: String,
     #[serde(default = "default_voiceger_prompt_lang")]
     pub voiceger_prompt_lang: String,
+    #[serde(default)]
+    pub voiceger_ref_free: bool,
     /// Per-language client-side text replacements applied before Voiceger synthesis.
     /// Outer key = language code (ja/en/zh/ko/yue), inner key = surface, value = reading.
     #[serde(default)]
@@ -92,6 +94,10 @@ pub struct SpeakerPreset {
     /// Voiceger emotion name (e.g. "甘え"). Empty string = ノーマル (use global ref audio).
     #[serde(default)]
     pub voiceger_emotion: String,
+    /// Voiceger only: optional per-preset reference wav path.
+    /// If set, this takes precedence over emotion/global reference audio.
+    #[serde(default)]
+    pub voiceger_ref_audio_override: String,
 }
 
 fn default_target_lufs() -> f64 {
@@ -173,6 +179,7 @@ impl Default for AppConfig {
             voiceger_ref_audio: String::new(),
             voiceger_prompt_text: String::new(),
             voiceger_prompt_lang: "ja".to_string(),
+            voiceger_ref_free: false,
             voiceger_dict: std::collections::HashMap::new(), // per-lang dicts initialized on demand
         }
     }
@@ -236,10 +243,12 @@ impl AppConfig {
             return if dir.exists() { Some(dir) } else { None };
         }
         let words = shell_words::split(self.voiceger_path.trim()).ok()?;
-        // Find the first word that looks like a file path (contains '/' or ends in .py)
+        // Prefer a .py script argument over any other path-like word.
+        // e.g. "python /path/to/api_v2.py" → pick api_v2.py, not the python binary.
         let script = words
             .iter()
-            .find(|w| w.contains('/') || w.ends_with(".py"))?;
+            .find(|w| w.ends_with(".py"))
+            .or_else(|| words.iter().find(|w| w.contains('/')))?;
         let parent = PathBuf::from(script).parent().map(|p| p.to_path_buf())?;
         // api_v2.py is inside GPT-SoVITS/, so the repo root is one level up
         parent.parent().map(|p| p.to_path_buf()).or(Some(parent))
@@ -289,6 +298,7 @@ impl AppConfig {
                 synth_params: SynthParamsConfig::default(),
                 engine: TtsEngineType::Voicevox,
                 voiceger_emotion: String::new(),
+                voiceger_ref_audio_override: String::new(),
             },
             SpeakerPreset {
                 name: "デフォルト：めたん".to_string(),
@@ -296,6 +306,7 @@ impl AppConfig {
                 synth_params: SynthParamsConfig::default(),
                 engine: TtsEngineType::Voicevox,
                 voiceger_emotion: String::new(),
+                voiceger_ref_audio_override: String::new(),
             },
             SpeakerPreset {
                 name: "デフォルト：つむぎ".to_string(),
@@ -303,6 +314,7 @@ impl AppConfig {
                 synth_params: SynthParamsConfig::default(),
                 engine: TtsEngineType::Voicevox,
                 voiceger_emotion: String::new(),
+                voiceger_ref_audio_override: String::new(),
             },
             SpeakerPreset {
                 name: "Voiceger：日本語".to_string(),
@@ -310,6 +322,7 @@ impl AppConfig {
                 synth_params: SynthParamsConfig::default(),
                 engine: TtsEngineType::Voiceger,
                 voiceger_emotion: String::new(),
+                voiceger_ref_audio_override: String::new(),
             },
             SpeakerPreset {
                 name: "Voiceger：English".to_string(),
@@ -317,6 +330,7 @@ impl AppConfig {
                 synth_params: SynthParamsConfig::default(),
                 engine: TtsEngineType::Voiceger,
                 voiceger_emotion: String::new(),
+                voiceger_ref_audio_override: String::new(),
             },
             SpeakerPreset {
                 name: "Voiceger：中文".to_string(),
@@ -324,6 +338,7 @@ impl AppConfig {
                 synth_params: SynthParamsConfig::default(),
                 engine: TtsEngineType::Voiceger,
                 voiceger_emotion: String::new(),
+                voiceger_ref_audio_override: String::new(),
             },
             SpeakerPreset {
                 name: "Voiceger：한국어".to_string(),
@@ -331,6 +346,7 @@ impl AppConfig {
                 synth_params: SynthParamsConfig::default(),
                 engine: TtsEngineType::Voiceger,
                 voiceger_emotion: String::new(),
+                voiceger_ref_audio_override: String::new(),
             },
             SpeakerPreset {
                 name: "Voiceger：粤語".to_string(),
@@ -338,6 +354,7 @@ impl AppConfig {
                 synth_params: SynthParamsConfig::default(),
                 engine: TtsEngineType::Voiceger,
                 voiceger_emotion: String::new(),
+                voiceger_ref_audio_override: String::new(),
             },
         ]
     }
