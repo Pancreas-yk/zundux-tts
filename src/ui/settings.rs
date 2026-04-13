@@ -79,7 +79,7 @@ fn show_preset_section(ui: &mut egui::Ui, state: &mut AppState, engine_group: &T
                 });
                 ui.add_space(4.0);
                 ui.horizontal(|ui| {
-                    ui.label("参照WAV(任意):");
+                    ui.label("参照音声(任意):");
                     ui.add(
                         egui::TextEdit::singleline(&mut buf.voiceger_ref_audio_override)
                             .desired_width(ui.available_width() - PRESET_REF_WAV_BUTTONS_WIDTH)
@@ -87,7 +87,7 @@ fn show_preset_section(ui: &mut egui::Ui, state: &mut AppState, engine_group: &T
                     );
                     if ui.small_button("参照").clicked() {
                         if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("WAV", &["wav"])
+                            .add_filter("音声ファイル", &["wav", "flac", "mp3", "ogg", "m4a", "aac"])
                             .pick_file()
                         {
                             buf.voiceger_ref_audio_override = path.to_string_lossy().to_string();
@@ -98,7 +98,12 @@ fn show_preset_section(ui: &mut egui::Ui, state: &mut AppState, engine_group: &T
                     }
                 });
                 ui.label(
-                    egui::RichText::new("※ 設定時は「参照WAV > 感情 > グローバル参照音声」の順で優先されます")
+                    egui::RichText::new("※ 設定時は「参照音声 > 感情 > グローバル参照音声」の順で優先されます")
+                        .small()
+                        .weak(),
+                );
+                ui.label(
+                    egui::RichText::new("⚠ WAV・FLACを推奨。MP3・AACは非可逆圧縮のため高周波が欠落し、声質の再現精度が下がる場合があります。")
                         .small()
                         .weak(),
                 );
@@ -606,11 +611,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                 ui.label("参照音声:");
                 ui.add(
                     egui::TextEdit::singleline(&mut state.config.voiceger_ref_audio)
-                        .hint_text("参照WAVのパス"),
+                        .hint_text("参照音声のパス"),
                 );
                 if ui.button("参照").clicked() {
                     if let Some(path) = rfd::FileDialog::new()
-                        .add_filter("WAV", &["wav"])
+                        .add_filter("音声ファイル", &["wav", "flac", "mp3", "ogg", "m4a", "aac"])
                         .pick_file()
                     {
                         state.config.voiceger_ref_audio = path.to_string_lossy().to_string();
@@ -618,6 +623,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                     }
                 }
             });
+            ui.label(
+                egui::RichText::new("⚠ WAV・FLACを推奨。MP3・AACは非可逆圧縮のため高周波が欠落し、声質の再現精度が下がる場合があります。")
+                    .small()
+                    .weak(),
+            );
             ui.horizontal(|ui| {
                 ui.label("参照言語:");
                 egui::ComboBox::from_id_salt("voiceger_prompt_lang")
