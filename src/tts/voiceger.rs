@@ -263,7 +263,11 @@ impl TtsEngine for VoicegerEngine {
             .aux_ref_audio
             .as_deref()
             .unwrap_or(&self.ref_audio_path);
-        let ref_free = params.voiceger_ref_free || Self::should_auto_ref_free_in_text(text);
+        let ref_audio_available = !ref_audio.trim().is_empty();
+        // Force ref_free when no reference audio is configured, or when text qualifies.
+        let ref_free = !ref_audio_available
+            || params.voiceger_ref_free
+            || Self::should_auto_ref_free_in_text(text);
 
         let url = format!("{}/tts", self.base_url);
         let mut body = serde_json::json!({
@@ -275,17 +279,20 @@ impl TtsEngine for VoicegerEngine {
             "media_type": "wav",
             "ref_free": ref_free,
         });
-        if let Some(obj) = body.as_object_mut() {
-            // Keep reference metadata even in ref_free mode for server-side compatibility.
-            obj.insert("ref_audio_path".to_string(), serde_json::json!(ref_audio));
-            obj.insert(
-                "prompt_text".to_string(),
-                serde_json::json!(&self.prompt_text),
-            );
-            obj.insert(
-                "prompt_lang".to_string(),
-                serde_json::json!(&self.prompt_lang),
-            );
+        // Only include reference metadata when ref_free is false AND a valid path exists.
+        // The server ignores ref_free=true when ref fields are present, so we must omit them.
+        if !ref_free && ref_audio_available {
+            if let Some(obj) = body.as_object_mut() {
+                obj.insert("ref_audio_path".to_string(), serde_json::json!(ref_audio));
+                obj.insert(
+                    "prompt_text".to_string(),
+                    serde_json::json!(&self.prompt_text),
+                );
+                obj.insert(
+                    "prompt_lang".to_string(),
+                    serde_json::json!(&self.prompt_lang),
+                );
+            }
         }
 
         tracing::info!(
