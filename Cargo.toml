@@ -22,6 +22,7 @@ url = "2"
 shell-words = "1"
 ctrlc = "3"
 libc = "0.2"
+tempfile = "3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 
 [patch.crates-io]

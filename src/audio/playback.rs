@@ -44,22 +44,19 @@ fn play_on_default_output_cancellable(
 ) -> Result<()> {
     use std::io::Write;
 
-    let tmp_path = std::env::temp_dir().join(format!(
-        "zundux_monitor_{}.wav",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos()
-    ));
-    {
-        let mut f =
-            std::fs::File::create(&tmp_path).context("Failed to create monitor temp file")?;
-        f.write_all(wav_data)
-            .context("Failed to write monitor WAV")?;
-    }
+    // NamedTempFile auto-deletes on drop — no manual cleanup needed and the
+    // random suffix eliminates the collision window the old subsec_nanos()
+    // naming had.
+    let mut tmp = tempfile::Builder::new()
+        .prefix("zundux_monitor_")
+        .suffix(".wav")
+        .tempfile()
+        .context("Failed to create monitor temp file")?;
+    tmp.write_all(wav_data)
+        .context("Failed to write monitor WAV")?;
 
     let mut child = Command::new("paplay")
-        .arg(&tmp_path)
+        .arg(tmp.path())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -69,17 +66,13 @@ fn play_on_default_output_cancellable(
         if cancel.load(std::sync::atomic::Ordering::SeqCst) {
             let _ = child.kill();
             let _ = child.wait();
-            let _ = std::fs::remove_file(&tmp_path);
             return Ok(());
         }
         match child
             .try_wait()
             .context("Failed to wait for monitor paplay")?
         {
-            Some(_) => {
-                let _ = std::fs::remove_file(&tmp_path);
-                return Ok(());
-            }
+            Some(_) => return Ok(()),
             None => std::thread::sleep(std::time::Duration::from_millis(50)),
         }
     }
@@ -161,19 +154,26 @@ pub fn play_file(
         .context("Failed to spawn paplay")?;
 
     // Store PIDs so external code can kill them to stop playback
-    {
-        let mut pid_list = pids.lock().unwrap();
-        pid_list.push(ffmpeg.id());
-        pid_list.push(paplay.id());
+    match pids.lock() {
+        Ok(mut list) => {
+            list.push(ffmpeg.id());
+            list.push(paplay.id());
+        }
+        Err(poisoned) => {
+            tracing::warn!("soundboard pid mutex poisoned; recovering");
+            let mut list = poisoned.into_inner();
+            list.push(ffmpeg.id());
+            list.push(paplay.id());
+        }
     }
 
     let paplay_status = paplay.wait().context("Failed to wait for paplay")?;
     let _ = ffmpeg.wait();
 
     // Clear PIDs after completion
-    {
-        let mut pid_list = pids.lock().unwrap();
-        pid_list.clear();
+    match pids.lock() {
+        Ok(mut list) => list.clear(),
+        Err(poisoned) => poisoned.into_inner().clear(),
     }
 
     if !paplay_status.success() {
@@ -191,10 +191,27 @@ pub fn stop_file_playback(
     cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) {
     cancel.store(true, std::sync::atomic::Ordering::SeqCst);
-    let pid_list = pids.lock().unwrap();
+    let pid_list = match pids.lock() {
+        Ok(g) => g,
+        Err(poisoned) => {
+            tracing::warn!("soundboard pid mutex poisoned; recovering");
+            poisoned.into_inner()
+        }
+    };
     for &pid in pid_list.iter() {
-        unsafe {
-            libc::kill(pid as i32, libc::SIGTERM);
+        // PIDs ≤1 are never valid playback children (0 = current process group,
+        // 1 = init).  Guard against garbage values / pid reuse of core procs.
+        if pid <= 1 {
+            tracing::warn!("Refusing to signal invalid pid {}", pid);
+            continue;
+        }
+        let rc = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+        if rc != 0 {
+            let err = std::io::Error::last_os_error();
+            // ESRCH = process already exited; benign and common.
+            if err.raw_os_error() != Some(libc::ESRCH) {
+                tracing::warn!("kill(SIGTERM) pid {} failed: {}", pid, err);
+            }
         }
     }
 }
@@ -311,26 +328,23 @@ fn play_with_paplay(
 ) -> Result<()> {
     use std::io::Write;
 
-    // Write WAV to a temp file (paplay doesn't support stdin).
-    let tmp_path = std::env::temp_dir().join(format!(
-        "zundux_tts_{}.wav",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .subsec_nanos()
-    ));
-    {
-        let mut f = std::fs::File::create(&tmp_path).context("Failed to create temp WAV file")?;
-        f.write_all(wav_data)
-            .context("Failed to write WAV to temp file")?;
-    }
+    // Write WAV to a temp file (paplay doesn't support stdin).  NamedTempFile
+    // deletes on drop, so we no longer need manual fs::remove_file cleanup
+    // on every exit path.
+    let mut tmp = tempfile::Builder::new()
+        .prefix("zundux_tts_")
+        .suffix(".wav")
+        .tempfile()
+        .context("Failed to create temp WAV file")?;
+    tmp.write_all(wav_data)
+        .context("Failed to write WAV to temp file")?;
 
     // Use ffmpeg → paplay pipeline so any sample rate / format is normalised to
     // 48kHz s16le before hitting the virtual sink.  This matches how play_file
     // works and avoids PipeWire rejecting non-48kHz PCM on the null sink.
     let ffmpeg = Command::new("ffmpeg")
         .args(["-i"])
-        .arg(&tmp_path)
+        .arg(tmp.path())
         .args([
             "-f",
             "s16le",
@@ -376,13 +390,11 @@ fn play_with_paplay(
                     let _ = ffmpeg_proc.kill();
                     let _ = paplay.wait();
                     let _ = ffmpeg_proc.wait();
-                    let _ = std::fs::remove_file(&tmp_path);
                     return Ok(());
                 }
                 match paplay.try_wait().context("Failed to wait for paplay")? {
                     Some(status) => {
                         let _ = ffmpeg_proc.wait();
-                        let _ = std::fs::remove_file(&tmp_path);
                         if !status.success() {
                             if let Some(code) = status.code() {
                                 anyhow::bail!("paplay exited with status {}", code);
@@ -399,7 +411,7 @@ fn play_with_paplay(
             tracing::warn!("ffmpeg not found, using direct paplay (format mismatch possible)");
             let mut child = Command::new("paplay")
                 .args(["--device", device_name])
-                .arg(&tmp_path)
+                .arg(tmp.path())
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
                 .spawn()
@@ -409,12 +421,10 @@ fn play_with_paplay(
                 if cancel.load(std::sync::atomic::Ordering::SeqCst) {
                     let _ = child.kill();
                     let _ = child.wait();
-                    let _ = std::fs::remove_file(&tmp_path);
                     return Ok(());
                 }
                 match child.try_wait().context("Failed to wait for paplay")? {
                     Some(status) => {
-                        let _ = std::fs::remove_file(&tmp_path);
                         if !status.success() {
                             if let Some(code) = status.code() {
                                 anyhow::bail!("paplay exited with status {}", code);

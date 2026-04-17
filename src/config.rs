@@ -385,6 +385,16 @@ impl AppConfig {
         Ok(config)
     }
 
+    /// Stable key for `soundboard_gains` lookups: the file name only.
+    /// Filesystem paths are rejected so a crafted config can't make the gain
+    /// table reference paths outside the soundboard directory.
+    pub fn soundboard_gain_key(path: &std::path::Path) -> Option<String> {
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .filter(|n| !n.contains('/') && !n.contains('\\') && *n != ".." && *n != ".")
+            .map(|n| n.to_string())
+    }
+
     fn validate_and_sanitize(&mut self) {
         if !validation::is_valid_device_name(&self.virtual_device_name) {
             tracing::warn!(
@@ -427,6 +437,19 @@ impl AppConfig {
                 p.name = p.name.chars().take(64).collect();
             }
         }
+
+        // Migrate legacy full-path keys to file-name-only keys.  Older versions
+        // stored absolute paths (including `..` components from crafted configs)
+        // as the key, which is both fragile across directory moves and a
+        // directory-traversal hazard.
+        let migrated: std::collections::HashMap<String, f64> =
+            std::mem::take(&mut self.soundboard_gains)
+                .into_iter()
+                .filter_map(|(k, v)| {
+                    Self::soundboard_gain_key(std::path::Path::new(&k)).map(|name| (name, v))
+                })
+                .collect();
+        self.soundboard_gains = migrated;
     }
 
     pub fn save(&self) -> Result<()> {
@@ -484,5 +507,46 @@ impl AppConfig {
             tracing::info!("Autostart disabled: removed {}", desktop_path.display());
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn soundboard_gain_key_uses_filename_only() {
+        assert_eq!(
+            AppConfig::soundboard_gain_key(Path::new("/home/u/sounds/hello.wav")),
+            Some("hello.wav".to_string())
+        );
+        assert_eq!(
+            AppConfig::soundboard_gain_key(Path::new("./relative/clip.mp3")),
+            Some("clip.mp3".to_string())
+        );
+    }
+
+    #[test]
+    fn soundboard_gain_key_rejects_traversal_and_bare_dots() {
+        assert_eq!(AppConfig::soundboard_gain_key(Path::new("..")), None);
+        assert_eq!(AppConfig::soundboard_gain_key(Path::new(".")), None);
+        // Empty path has no file_name component.
+        assert_eq!(AppConfig::soundboard_gain_key(Path::new("")), None);
+    }
+
+    #[test]
+    fn migration_drops_legacy_full_path_keys_in_favour_of_basenames() {
+        let mut cfg = AppConfig::default();
+        cfg.soundboard_gains
+            .insert("/home/u/sounds/a.wav".to_string(), -3.0);
+        cfg.soundboard_gains
+            .insert("../escape.wav".to_string(), 1.0);
+        cfg.soundboard_gains.insert("..".to_string(), 42.0);
+        cfg.validate_and_sanitize();
+        // Full path collapses to basename; bare ".." is dropped entirely.
+        assert_eq!(cfg.soundboard_gains.get("a.wav"), Some(&-3.0));
+        assert_eq!(cfg.soundboard_gains.get("escape.wav"), Some(&1.0));
+        assert!(!cfg.soundboard_gains.contains_key(".."));
     }
 }

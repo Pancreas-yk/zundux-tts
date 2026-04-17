@@ -226,11 +226,8 @@ fn show_sound_chips(ui: &mut egui::Ui, state: &mut AppState, theme: &Theme) {
             );
 
             if let Some(info) = loudness {
-                let gain = state
-                    .config
-                    .soundboard_gains
-                    .get(&path.to_string_lossy().to_string())
-                    .copied()
+                let gain = crate::config::AppConfig::soundboard_gain_key(path)
+                    .and_then(|k| state.config.soundboard_gains.get(&k).copied())
                     .unwrap_or(0.0);
                 let effective_lufs = info.lufs + gain;
 

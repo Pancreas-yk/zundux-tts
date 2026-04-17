@@ -1,6 +1,21 @@
 use anyhow::{Context, Result};
 use std::process::Command;
 
+/// Parse the module ID printed by `pactl load-module`.  Logs a warning (with
+/// the raw output) when parsing fails so the operator can clean up by hand — a
+/// lost ID means the module stays loaded until `cleanup_stale_loopbacks` runs.
+fn parse_module_id(stdout: &[u8], what: &str) -> Option<u32> {
+    let text = String::from_utf8_lossy(stdout);
+    let trimmed = text.trim();
+    match trimmed.parse::<u32>() {
+        Ok(id) => Some(id),
+        Err(e) => {
+            tracing::warn!("Failed to parse {what} module id from pactl output {trimmed:?}: {e}");
+            None
+        }
+    }
+}
+
 pub struct VirtualDevice {
     pub(crate) sink_name: String,
     sink_module_id: Option<u32>,
@@ -78,12 +93,11 @@ impl VirtualDevice {
                 anyhow::bail!("pactl load-module (null-sink) failed: {}", stderr);
             }
 
-            let id_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            self.sink_module_id = id_str.parse().ok();
+            self.sink_module_id = parse_module_id(&output.stdout, "null-sink");
             tracing::info!(
-                "Created virtual sink {} (module {})",
+                "Created virtual sink {} (module {:?})",
                 self.sink_name,
-                id_str
+                self.sink_module_id
             );
         } else {
             tracing::info!("Virtual sink {} already exists", self.sink_name);
@@ -125,9 +139,12 @@ impl VirtualDevice {
                     self.sink_name
                 );
             } else {
-                let id_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                self.source_module_id = id_str.parse().ok();
-                tracing::info!("Created virtual source {} (module {})", source_name, id_str);
+                self.source_module_id = parse_module_id(&output.stdout, "virtual-source");
+                tracing::info!(
+                    "Created virtual source {} (module {:?})",
+                    source_name,
+                    self.source_module_id
+                );
             }
         } else {
             tracing::info!("Virtual source {} already exists", self.source_name());
@@ -215,9 +232,11 @@ impl VirtualDevice {
                 );
                 source_name.to_string()
             } else {
-                let id_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                self.ladspa_module_id = id_str.parse().ok();
-                tracing::info!("RNNoise noise suppression enabled (module {})", id_str);
+                self.ladspa_module_id = parse_module_id(&output.stdout, "ladspa-source");
+                tracing::info!(
+                    "RNNoise noise suppression enabled (module {:?})",
+                    self.ladspa_module_id
+                );
                 denoised
             }
         } else {
@@ -246,9 +265,11 @@ impl VirtualDevice {
             anyhow::bail!("module-loopback failed: {}", stderr.trim());
         }
 
-        let id_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        self.loopback_module_id = id_str.parse().ok();
-        tracing::info!("Mic passthrough enabled (module {})", id_str);
+        self.loopback_module_id = parse_module_id(&output.stdout, "loopback");
+        tracing::info!(
+            "Mic passthrough enabled (module {:?})",
+            self.loopback_module_id
+        );
         Ok(())
     }
 
@@ -360,6 +381,11 @@ impl Drop for VirtualDevice {
         // Only the loopback and LADSPA modules are transient and must be cleaned up.
         let _ = self.disable_mic_passthrough();
         self.unload_ladspa();
+        // Belt-and-suspenders: if a module-id parse failed earlier (rare), the
+        // tracked handle is None and the calls above are no-ops.  Scan the
+        // module list for anything still pointing at our sink / denoised source
+        // so a panic or an unparsable pactl response can't leave modules behind.
+        self.cleanup_stale_loopbacks();
         // Forget the module IDs so destroy() (if called explicitly) is a no-op for
         // sink/source, and pactl unload-module is not issued for them.
         self.sink_module_id = None;

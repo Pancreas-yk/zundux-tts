@@ -691,14 +691,22 @@ impl ZunduxApp {
         if self.state.pending_normalize_all {
             self.state.pending_normalize_all = false;
             for (path, info) in &self.state.soundboard_loudness {
+                let Some(key) = AppConfig::soundboard_gain_key(path) else {
+                    tracing::warn!(
+                        "Skipping unnormalizable soundboard path: {}",
+                        path.display()
+                    );
+                    continue;
+                };
                 let gain = crate::audio::loudness::calculate_gain_db(
                     info.lufs,
                     self.state.config.target_lufs,
                 );
-                let key = path.to_string_lossy().to_string();
                 self.state.config.soundboard_gains.insert(key, gain);
             }
-            let _ = self.state.config.save();
+            if let Err(e) = self.state.config.save() {
+                tracing::warn!("Failed to persist soundboard gains: {}", e);
+            }
         }
 
         if self.state.pending_refresh_mic_sources {
@@ -811,12 +819,8 @@ impl ZunduxApp {
             }
             // Reset cancel signal for new playback
             self.soundboard_cancel.store(false, Ordering::SeqCst);
-            let gain_db = self
-                .state
-                .config
-                .soundboard_gains
-                .get(&file_path.to_string_lossy().to_string())
-                .copied();
+            let gain_db = AppConfig::soundboard_gain_key(&file_path)
+                .and_then(|k| self.state.config.soundboard_gains.get(&k).copied());
             let device_name = self.state.config.virtual_device_name.clone();
             let monitor = self.state.config.monitor_audio;
             let playing = self.is_soundboard_playing.clone();
@@ -1124,22 +1128,21 @@ impl ZunduxApp {
             .filter(|d| d.exists());
 
         // Write server output to a log file for debugging.
-        let log_file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open("/tmp/zundux_voiceger.log")
-            .ok();
-        let (stdout_io, stderr_io) = match log_file {
-            Some(f) => {
-                let f2 = f.try_clone().unwrap_or_else(|_| {
-                    std::fs::OpenOptions::new()
-                        .create(true).append(true)
-                        .open("/tmp/zundux_voiceger.log").unwrap()
-                });
-                (std::process::Stdio::from(f), std::process::Stdio::from(f2))
-            }
-            None => (std::process::Stdio::null(), std::process::Stdio::null()),
+        // Open two independent handles so stdout/stderr can both be redirected even
+        // if try_clone() fails (e.g. exotic FS).  Fall back to /dev/null per stream.
+        let open_log = || {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open("/tmp/zundux_voiceger.log")
+                .ok()
         };
+        let stdout_io = open_log()
+            .map(std::process::Stdio::from)
+            .unwrap_or_else(std::process::Stdio::null);
+        let stderr_io = open_log()
+            .map(std::process::Stdio::from)
+            .unwrap_or_else(std::process::Stdio::null);
 
         let mut cmd = Command::new(&words[0]);
         cmd.args(&words[1..])
@@ -1283,6 +1286,19 @@ impl ZunduxApp {
     }
 }
 
+/// Graceful kill: SIGTERM, wait briefly, then SIGKILL as a fallback.
+fn graceful_shutdown(child: &mut Child) {
+    let _ = std::process::Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status();
+    if let Ok(Some(_)) = child.try_wait() {
+        return;
+    }
+    std::thread::sleep(std::time::Duration::from_secs(5));
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
 impl Drop for ZunduxApp {
     fn drop(&mut self) {
         self.desktop_capture.stop_capture();
@@ -1293,18 +1309,10 @@ impl Drop for ZunduxApp {
                 .status();
         }
         if let Some(ref mut child) = self.voicevox_process {
-            // Try graceful SIGTERM first, then force kill after 5 seconds
-            let _ = std::process::Command::new("kill")
-                .args(["-TERM", &child.id().to_string()])
-                .status();
-            match child.try_wait() {
-                Ok(Some(_)) => {}
-                _ => {
-                    std::thread::sleep(std::time::Duration::from_secs(5));
-                    let _ = child.kill();
-                    let _ = child.wait();
-                }
-            }
+            graceful_shutdown(child);
+        }
+        if let Some(ref mut child) = self.voiceger_process {
+            graceful_shutdown(child);
         }
     }
 }
